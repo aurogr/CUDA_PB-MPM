@@ -33,7 +33,6 @@ find_package(glfw3 REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE 
     glfw               
     OpenGL::GL          
-    CUDA::cudart        
 )
 
 # Include directory so headers resolve nicely
