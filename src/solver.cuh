@@ -36,19 +36,15 @@ __device__ inline int InitQuadraticWeights(float Xp, float w[3], float dw[3])
     // Offset from the base node center
     float offset = Xp - static_cast<float>(base_node);
 
-    // B-spline weights relative to the 3-node stencil [base, base+1, base+2]
+    // B-spline weights 
     w[0] = 0.5f * (1.5f - offset) * (1.5f - offset);
     w[1] = 0.75f - (offset - 1.0f) * (offset - 1.0f);
     w[2] = 0.5f * (offset - 0.5f) * (offset - 0.5f);
 
-    // Gradient of weights (d/dXp)
+    // gradients of weights (d/dXp)
     dw[0] = offset - 1.5f;
-    dw[1] = 2.0f * (offset - 1.0f);
-    dw[2] = 0.5f - offset;
+    dw[1] = -2.0f * (offset - 1.0f);
+    dw[2] = offset - 0.5f;
 
     return base_node;
 }
-
-#pragma region Draw
-
-#pragma endregion

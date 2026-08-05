@@ -68,11 +68,11 @@ __global__ void p2g_kernel(const float* d_Vp0, const float2* d_Xp, const float2*
     // 1.2. Calculate stress derivative from particle constitutive model
     // (IDEA: Here each particle could have an index that points to an enum of constitutive types? or a pointer to a type?)
     // For now we only have water
-    const double RHO_water = 1.0;					// Density
-    const double K_water = 50.0;					// Bulk Modulus
+    const float RHO_water = 1.0;					// Density
+    const float K_water = 50.0;					// Bulk Modulus
     const int   GAMMA_water = 3;					// Penalize deviation form incompressibility
 
-    double dJp = -K_water * (1.0 / pow(Jp, GAMMA_water) - 1.0);	// Deformation gradient increment
+    float dJp = -K_water * (1.0 / pow(Jp, GAMMA_water) - 1.0);	// Deformation gradient increment
     Ap = dJp * Vp0 * Jp;
 
     // 2. Find the bottom-left node closest to the particle of the 3x3 stencil (and init weights)
@@ -136,7 +136,12 @@ __global__ void updateGrid_kernel(const float* d_Mi, float2* d_Vi, float2* d_Vi_
 
     float Mi = d_Mi[i];
 
-    if (Mi <= 0.0f) return;
+    if (Mi < 1e-7f) {
+        d_Vi[i] = make_float2(0.0f, 0.0f);
+        d_Vi_Col[i] = make_float2(0.0f, 0.0f);
+        d_Vi_Fri[i] = make_float2(0.0f, 0.0f);
+        return;
+    }
 
     // 1. Get nodal velocity from momentum: v_i = (mv)_i / m_i
     d_Vi[i].x /= Mi;
@@ -163,15 +168,8 @@ __global__ void updateGrid_kernel(const float* d_Mi, float2* d_Vi, float2* d_Vi_
     float2 Vi_col = ApplyNodeCollision(Xi, d_Vi[i], bounds, dt);
     d_Vi_Col[i] = Vi_col;
 
-    // 7. Node Frictions (Vi_fri)
-#if FRICTION
-    // Apply NodeFrictions logic here if applicable
-    float2 Vi_fri = Vi_col;
-#else
-    float2 Vi_fri = Vi_col;
-#endif
-
-    d_Vi_Fri[i] = Vi_fri;
+    // TODO: Apply NodeFrictions logic here if applicable
+    d_Vi_Fri[i] = Vi_col;
 }
 
 __global__ void g2p_kernel(float2* d_Xp, float2* d_Vp, float* d_Jp, float4* d_Bp, // Matrix 2x2 stored as float4: x=00, y=01, z=10, w=11
@@ -249,8 +247,8 @@ __global__ void g2p_kernel(float2* d_Xp, float2* d_Vp, float* d_Jp, float4* d_Bp
     Xp.x += dt * new_Vp_col.x;
     Xp.y += dt * new_Vp_col.y;
 
-    // 2. Clamp particle position inside the active domain boundary (padding = 1.0)
-    const float padding = 1.0f;
+    // 2. Clamp particle position inside the active domain boundary
+    const float padding = 2.0f;
     Xp.x = fminf(fmaxf(Xp.x, padding), (float)gridX - padding);
     Xp.y = fminf(fmaxf(Xp.y, padding), (float)gridY - padding);
 
@@ -258,7 +256,9 @@ __global__ void g2p_kernel(float2* d_Xp, float2* d_Vp, float* d_Jp, float4* d_Bp
 
     // 5. Nodal deformation
     float next_Jp = d_Jp[p] * (1.0f + dt * (T.x + T.w));
-    d_Jp[p] = fmaxf(next_Jp, 0.01f);
+
+    // 6. Prevent Volume Explosions
+    d_Jp[p] = fminf(fmaxf(next_Jp, 0.6f), 1.5f);
 }
 
 #pragma endregion

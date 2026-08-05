@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <cuda_runtime.h>
+
 #include "constants.h"
 #include "solver.cuh"
 #include "grid.h"
@@ -84,6 +85,11 @@ void Update()
     updateGrid(grid, DT, bounds);
     g2p(ps, grid, DT);
 }
+#pragma endregion
+
+
+
+#pragma region OpenGL
 
 void RenderParticles()
 {
@@ -101,6 +107,60 @@ void RenderParticles()
         glVertex2f(h_Xp[i].x, h_Xp[i].y);
     }
     glEnd();
+}
+
+void RenderGridNodes() {
+    std::vector<float> h_Mi(grid.num_nodes);
+    cudaMemcpy(h_Mi.data(), grid.d_Mi, (grid.num_nodes) * sizeof(float), cudaMemcpyDeviceToHost);
+
+    glEnable(GL_POINT_SMOOTH);
+    glPointSize(3.0f);
+
+    glBegin(GL_POINTS);
+    int stride = grid.grid_x + 1;
+
+    for (int i = 0; i < grid.num_nodes; ++i) {
+        // Derive position on the fly on CPU
+        float gx = static_cast<float>(i % stride);
+        float gy = static_cast<float>(i / stride);
+
+        if (h_Mi[i] > 0.0f) {
+            glColor3f(0.5f, 0.5f, 0.5f); // Active node (has mass)
+        }
+        else {
+            glColor3f(0.3f, 0.3f, 0.3f); // Inactive node
+        }
+
+        glVertex2f(gx, gy);
+    }
+
+    glEnd();
+}
+
+GLFWwindow* initGLFWContext()
+{
+    if (!glfwInit()) exit(EXIT_FAILURE);
+
+    GLFWwindow* window = glfwCreateWindow(X_WINDOW, Y_WINDOW, "CUDA MPM Simulation", NULL, NULL);
+    if (!window) {
+        glfwTerminate();
+        exit(EXIT_FAILURE);
+    }
+
+    glfwMakeContextCurrent(window);
+    return window;
+}
+
+void initGLContext()
+{
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, X_GRID, 0, Y_GRID, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glViewport(0, 0, (GLsizei)X_WINDOW, (GLsizei)Y_WINDOW);
+    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 }
 #pragma endregion
 
@@ -128,7 +188,7 @@ int main()
                 Update();
                 stepOnce = false;
             }
-
+            RenderGridNodes();
             RenderParticles();
 
             glfwSwapBuffers(window);
@@ -145,33 +205,5 @@ int main()
     }
 
     return 0;
-}
-#pragma endregion
-
-#pragma region OpenGL
-GLFWwindow* initGLFWContext()
-{
-    if (!glfwInit()) exit(EXIT_FAILURE);
-
-    GLFWwindow* window = glfwCreateWindow(X_WINDOW, Y_WINDOW, "CUDA MPM Simulation", NULL, NULL);
-    if (!window) {
-        glfwTerminate();
-        exit(EXIT_FAILURE);
-    }
-
-    glfwMakeContextCurrent(window);
-    return window;
-}
-
-void initGLContext()
-{
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glOrtho(0, X_GRID, 0, Y_GRID, -1, 1);
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-
-    glViewport(0, 0, (GLsizei)X_WINDOW, (GLsizei)Y_WINDOW);
-    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 }
 #pragma endregion
