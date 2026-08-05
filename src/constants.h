@@ -11,9 +11,11 @@
 const static int X_GRID = 200;							// Size of the domain
 const static int Y_GRID = 100;
 
+inline constexpr int MAX_PARTICLES = 1000;
+
 //// Transfer
-//#define INTERPOLATION 1									// [1] Cubic - [2] Quadratic
-//const static double DT = 0.001;						// Time-step
+#define INTERPOLATION 2									// [1] Cubic - [2] Quadratic
+const static double DT = 0.001;						// Time-step
 //
 //// Ouput
 //#define RECORD_VIDEO false
@@ -35,24 +37,24 @@ const static int Y_GRID = 100;
 //
 //
 ///* ----- TRANSFER ----- */
-//#if INTERPOLATION == 1
-//const static int CUB = 2;
-//const static Vector2f Translation_xp = Vector2f(0.0);
-//static const int bni = -1;
-//static const double Dp_scal = 3.0;
+#if INTERPOLATION == 1
+const static int CUB = 2;
+const static Vector2f Translation_xp = Vector2f(0.0);
+static const int bni = -1;
+static const double Dp_scal = 3.0;
+
+#elif INTERPOLATION == 2
+const static float CUB = 1.5;
+//const static float2 Translation_xp = Vector2f(0.5);
+static const int bni = 0;
+static const double Dp_scal = 4.0;
+#endif
 //
-//#elif INTERPOLATION == 2
-//const static double CUB = 1.5;
-//const static Vector2f Translation_xp = Vector2f(0.5);
-//static const int bni = 0;
-//static const double Dp_scal = 4.0;
-//#endif
 //
-//
-///* ----- RENDERING ----- */
-//const static int X_WINDOW = 1400;						// Window size
-//const static int Y_WINDOW = X_WINDOW * Y_GRID / X_GRID;
-//
+/* ----- RENDERING ----- */
+const static int X_WINDOW = 1400;						// Window size
+const static int Y_WINDOW = X_WINDOW * Y_GRID / X_GRID;
+
 //#if RECORD_VIDEO || WRITE_TO_FILE
 //const static int FPS = 30;								// Video frame rate
 //const static double DT_render = 1.0 / FPS;
@@ -78,7 +80,7 @@ const static int Y_GRID = 100;
 //const static double K_water = 50.0;						// Bulk Modulus
 //const static int   GAMMA_water = 3;						// Penalize deviation form incompressibility
 //
-//const static int DT_ROB = 30;							// Rate of AddParticle()
+const static int DT_ROB = 30;							// Rate of AddParticle()
 //
 //
 ///* Dry Sand */

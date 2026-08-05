@@ -1,61 +1,209 @@
 #include <iostream>
 #include <vector>
 #include <cuda_runtime.h>
+
 #include "constants.h"
 #include "solver.cuh"
 #include "grid.h"
 #include "particleSystem.h"
+#include "boundary.h"
 
+#include <GLFW/glfw3.h>
 
-int main() {
-    constexpr int NUM_PARTICLES = 1000;
+/* Globals */
+Grid grid;
+ParticleSystem ps;
+BoundaryData bounds;
 
-    std::cout << "Initializing CUDA MPM2D Simulation...\n";
-    std::cout << "Particles: " << NUM_PARTICLES << " | Grid: " << X_GRID << "x" << Y_GRID << "\n";
+int frameCount = 0;
 
-        // 1. Initialize Host (CPU) data using standard float2
-        std::vector<float2> h_Xp(NUM_PARTICLES);
-    std::vector<float2> h_Vp(NUM_PARTICLES);
+void initGLContext();
+GLFWwindow* initGLFWContext();
 
-    // Spawn particles inside a 2D box (e.g., [2,2] to [8,8])
-    for (int i = 0; i < NUM_PARTICLES; ++i) {
-        float fx = 2.0f + static_cast<float>(rand() % 600) / 100.0f;
-        float fy = 2.0f + static_cast<float>(rand() % 600) / 100.0f;
+bool pauseSimulation = true;
+bool stepOnce = false;
 
-        h_Xp[i] = make_float2(fx, fy);
-        h_Vp[i] = make_float2(0.0f, -9.8f); // Initial downward velocity
+// Key callback function
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    if (action == GLFW_PRESS) {
+        if (key == GLFW_KEY_SPACE) {
+            pauseSimulation = !pauseSimulation; // Toggle play/pause
+        }
+        if (key == GLFW_KEY_S) {
+            stepOnce = true; // Step exactly 1 frame forward
+        }
     }
+}
 
-    // 2. Initialize GPU Grid and Particle System
-    Grid grid;
+#pragma region Material Point Method Algorithm
+void Initialization()
+{
     grid.initialize(X_GRID, Y_GRID);
 
-        ParticleSystem particle_system;
-    particle_system.initialize(NUM_PARTICLES, h_Xp, h_Vp); 
+    BoundaryManager boundaryManager;
+    boundaryManager.InitializeDefaultBorders();
+    boundaryManager.CopyToDevice();
+    bounds = boundaryManager.GetDeviceData();
 
-        std::cout << "GPU Memory successfully allocated and copied!\n";
+    // Spawn fluid block (e.g., 40x40 block of particles)
+    std::vector<float2> init_pos;
+    std::vector<float2> init_vel;
 
-        // 3. Test Kernel Launch
-        float cell_spacing = 1.0f;
-        std::cout << "Launching P2G Kernel...\n";
-        run_p2g(particle_system, grid, cell_spacing);
+    ps.initialize(static_cast<int>(init_pos.size()), init_pos, init_vel);
+}
 
-        // 4. Verify GPU Result (Copy back node mass array to CPU)
-        std::vector<float> h_Mi(grid.num_nodes);
-        cudaMemcpy(h_Mi.data(), grid.d_Mi, grid.num_nodes * sizeof(float), cudaMemcpyDeviceToHost);
+void AddParticles() {
+    std::vector<float2> new_pos;
+    std::vector<float2> new_vel;
 
-            float total_grid_mass = 0.0f;
-        for (float mass : h_Mi) {
-            total_grid_mass += mass;
+    float2 v = make_float2(30.0f, 0.0f); // Initial velocity[cite: 10]
+
+    for (int p = 0; p < 8; ++p) { //[cite: 10]
+        float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX); //[cite: 10]
+
+        // Formula translated directly from your snippet[cite: 10]:
+        float pos_x = static_cast<float>(CUB); //[cite: 10]
+        float pos_y = static_cast<float>(Y_GRID) - 2.0f * static_cast<float>(CUB) - 0.5f * static_cast<float>(p) - r; //[cite: 10]
+
+        new_pos.push_back(make_float2(pos_x, pos_y));
+        new_vel.push_back(v);
+    }
+
+    // Append to GPU particle system (Water parameters: Vp0 = 1.14, Mp = 0.0005)[cite: 10]
+    ps.addParticlesMidSimulation(new_pos, new_vel, 1.14f, 0.0005f);
+}
+
+void Update()
+{
+    if (frameCount % DT_ROB == 0) {
+        AddParticles();
+    }
+    frameCount++;
+
+    grid.clear();
+    p2g(ps, grid, DT);
+    updateGrid(grid, DT, bounds);
+    g2p(ps, grid, DT);
+}
+#pragma endregion
+
+
+
+#pragma region OpenGL
+
+void RenderParticles()
+{
+    if (ps.num_particles == 0) return;
+
+    std::vector<float2> h_Xp(ps.num_particles);
+    cudaMemcpy(h_Xp.data(), ps.d_Xp, ps.num_particles * sizeof(float2), cudaMemcpyDeviceToHost);
+
+    glColor3f(0.2f, 0.6f, 1.0f);
+    glPointSize(12);
+
+    glEnable(GL_POINT_SMOOTH);
+    glBegin(GL_POINTS);
+    for (int i = 0; i < ps.num_particles; ++i) {
+        glVertex2f(h_Xp[i].x, h_Xp[i].y);
+    }
+    glEnd();
+}
+
+void RenderGridNodes() {
+    std::vector<float> h_Mi(grid.num_nodes);
+    cudaMemcpy(h_Mi.data(), grid.d_Mi, (grid.num_nodes) * sizeof(float), cudaMemcpyDeviceToHost);
+
+    glEnable(GL_POINT_SMOOTH);
+    glPointSize(3.0f);
+
+    glBegin(GL_POINTS);
+    int stride = grid.grid_x + 1;
+
+    for (int i = 0; i < grid.num_nodes; ++i) {
+        // Derive position on the fly on CPU
+        float gx = static_cast<float>(i % stride);
+        float gy = static_cast<float>(i / stride);
+
+        if (h_Mi[i] > 0.0f) {
+            glColor3f(0.5f, 0.5f, 0.5f); // Active node (has mass)
+        }
+        else {
+            glColor3f(0.3f, 0.3f, 0.3f); // Inactive node
         }
 
-        std::cout << "P2G Success! Total Mass transferred to Grid: "
-            << total_grid_mass << " (Expected ~" << NUM_PARTICLES << ".0)\n";
+        glVertex2f(gx, gy);
+    }
 
-        // 5. Cleanup
-        particle_system.free(); 
-            grid.free(); 
-
-            std::cout << "Simulation trial finished cleanly.\n";
-        return 0;
+    glEnd();
 }
+
+GLFWwindow* initGLFWContext()
+{
+    if (!glfwInit()) exit(EXIT_FAILURE);
+
+    GLFWwindow* window = glfwCreateWindow(X_WINDOW, Y_WINDOW, "CUDA MPM Simulation", NULL, NULL);
+    if (!window) {
+        glfwTerminate();
+        exit(EXIT_FAILURE);
+    }
+
+    glfwMakeContextCurrent(window);
+    return window;
+}
+
+void initGLContext()
+{
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, X_GRID, 0, Y_GRID, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glViewport(0, 0, (GLsizei)X_WINDOW, (GLsizei)Y_WINDOW);
+    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+}
+#pragma endregion
+
+#pragma region Main
+int main()
+{
+    std::cout << "[INFO] Starting CUDA MPM Simulation..." << std::endl;
+
+    try {
+        Initialization();
+
+        GLFWwindow* window = initGLFWContext();
+        if (!window) return -1;
+
+        glfwSetKeyCallback(window, key_callback);
+
+        initGLContext();
+
+        while (!glfwWindowShouldClose(window))
+        {
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            // Only update if not paused, or if single-step was requested
+            if (!pauseSimulation || stepOnce) {
+                Update();
+                stepOnce = false;
+            }
+            RenderGridNodes();
+            RenderParticles();
+
+            glfwSwapBuffers(window);
+            glfwPollEvents();
+        }
+
+        ps.free();
+        grid.free();
+        glfwTerminate();
+    }
+    catch (const std::exception& e) {
+        std::cerr << "[CRASH] Exception caught: " << e.what() << std::endl;
+        return -1;
+    }
+
+    return 0;
+}
+#pragma endregion
