@@ -4,8 +4,22 @@
 #include "particleSystem.h"
 #include "grid.h"
 #include "constants.h"
+#include "boundary.h"
 
-void run_p2g(const ParticleSystem& ps, Grid& grid, float h);
+/// <summary>
+/// Particle to grid. Transfer particle mass, momentum, and force (computed using stresses) to grid nodes using interpolation functions.
+/// </summary>
+void p2g(const ParticleSystem& ps, Grid& grid, float dt);
+
+/// <summary>
+/// Update nodal velocities via time integration while enforcing boundary conditions.
+/// </summary>
+void updateGrid(Grid& grid, float dt, BoundaryData bounds);
+
+/// <summary>
+/// Interpolate updated grid velocities back to particles. Update each particle’s deformation gradient based on local velocity gradients and advect particle positions using updated velocities.
+/// </summary>
+void g2p(ParticleSystem& ps, const Grid& grid, float dt);
 
 /// <summary>
 /// Init quadratic weights (grid step size is assumed to be 1.0)
@@ -16,16 +30,21 @@ void run_p2g(const ParticleSystem& ps, Grid& grid, float h);
 /// <returns>Starting node index for the 3-node stencil</returns>
 __device__ inline int InitQuadraticWeights(float Xp, float w[3], float dw[3])
 {
-    float flooredPos = floorf(Xp);
-    float offset = (Xp - flooredPos) - 0.5f;
+    // Quadratic stencil base node starts at floor(Xp - 0.5f)
+    int base_node = static_cast<int>(floorf(Xp - 0.5f));
 
-    w[0] = 0.5f * (0.5f - offset) * (0.5f - offset);
-    w[1] = 0.75f - (offset * offset);
-    w[2] = 0.5f * (0.5f + offset) * (0.5f + offset);
+    // Offset from the base node center
+    float offset = Xp - static_cast<float>(base_node);
 
-    dw[0] = offset - 0.5f;
-    dw[1] = -2.0f * offset;
-    dw[2] = offset + 0.5f;
+    // B-spline weights 
+    w[0] = 0.5f * (1.5f - offset) * (1.5f - offset);
+    w[1] = 0.75f - (offset - 1.0f) * (offset - 1.0f);
+    w[2] = 0.5f * (offset - 0.5f) * (offset - 0.5f);
 
-    return static_cast<int>(flooredPos) - 1;
+    // gradients of weights (d/dXp)
+    dw[0] = offset - 1.5f;
+    dw[1] = -2.0f * (offset - 1.0f);
+    dw[2] = offset - 0.5f;
+
+    return base_node;
 }
