@@ -57,9 +57,9 @@ public:
         if (add_count == 0) return;
 
         // Prevent overflow beyond pre-allocated bound
-        if (num_particles + add_count > MAX_PARTICLES) {
-            std::cerr << "[WARNING] Maximum particle capacity reached! Cannot add more particles.\n";
-            return;
+        if (num_particles + add_count >= MAX_PARTICLES) {
+            add_count = std::max(0, MAX_PARTICLES - num_particles);
+            std::cout << "\nReached particles limit. Cannot add more particles to simulation.\n";
         }
 
         int offset = num_particles;

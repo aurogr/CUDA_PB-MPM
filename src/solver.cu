@@ -95,6 +95,10 @@ __global__ void p2g_kernel(const float* d_Vp0, const float2* d_Xp, const float2*
 
             // 3.2 Get weights
             float Wip = w_x[x] * w_y[y];
+
+            // TODO: see if this step is necessary or i could skip it
+            if (Wip < 1e-5f) continue; // skip negligible contributions
+
             float dWip_x = dw_x[x] * w_y[y];
             float dWip_y = w_x[x] * dw_y[y];
 

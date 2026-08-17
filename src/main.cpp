@@ -1,27 +1,39 @@
+
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
+
+#include <cuda_runtime.h>
+#include <cuda_gl_interop.h>
+
 #include <iostream>
 #include <vector>
-#include <cuda_runtime.h>
-
 #include "constants.h"
 #include "solver.cuh"
 #include "grid.h"
 #include "particleSystem.h"
 #include "boundary.h"
 
-#include <GLFW/glfw3.h>
+#ifdef _WIN32
+extern "C" {
+    __declspec(dllexport) unsigned long NvOptimusEnablement = 0x00000001;
+}
+#endif
 
 /* Globals */
 Grid grid;
 ParticleSystem ps;
 BoundaryData bounds;
 
-int frameCount = 0;
+int stepCount = 0;
 
 void initGLContext();
 GLFWwindow* initGLFWContext();
 
 bool pauseSimulation = true;
 bool stepOnce = false;
+
+GLuint particleVBO;
+cudaGraphicsResource_t particleCudaResource;
 
 // Key callback function
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -56,57 +68,83 @@ void AddParticles() {
     std::vector<float2> new_pos;
     std::vector<float2> new_vel;
 
-    float2 v = make_float2(30.0f, 0.0f); // Initial velocity[cite: 10]
+    float2 v = make_float2(30.0f, 0.0f);
 
-    for (int p = 0; p < 8; ++p) { //[cite: 10]
-        float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX); //[cite: 10]
+    for (int p = 0; p < 8; ++p) {
+        float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
 
-        // Formula translated directly from your snippet[cite: 10]:
-        float pos_x = static_cast<float>(CUB); //[cite: 10]
-        float pos_y = static_cast<float>(Y_GRID) - 2.0f * static_cast<float>(CUB) - 0.5f * static_cast<float>(p) - r; //[cite: 10]
+        float pos_x = static_cast<float>(INT_CELL_SPAN);
+        float pos_y = static_cast<float>(Y_GRID) - 2.0f * static_cast<float>(INT_CELL_SPAN) - 0.5f * static_cast<float>(p) - r;
 
         new_pos.push_back(make_float2(pos_x, pos_y));
         new_vel.push_back(v);
     }
 
-    // Append to GPU particle system (Water parameters: Vp0 = 1.14, Mp = 0.0005)[cite: 10]
     ps.addParticlesMidSimulation(new_pos, new_vel, 1.14f, 0.0005f);
 }
 
 void Update()
 {
-    if (frameCount % DT_ROB == 0) {
+    if (ps.num_particles < MAX_PARTICLES && stepCount % EMISSION_INTERVAL == 0) {
         AddParticles();
     }
-    frameCount++;
+
+    stepCount++;
 
     grid.clear();
-    p2g(ps, grid, DT);
-    updateGrid(grid, DT, bounds);
-    g2p(ps, grid, DT);
+    p2g(ps, grid, PHYSICS_DT);
+    updateGrid(grid, PHYSICS_DT, bounds);
+    g2p(ps, grid, PHYSICS_DT);
 }
 #pragma endregion
 
-
-
 #pragma region OpenGL
+
+void InitOpenGLInterop()
+{
+    // 1. Generate OpenGL buffer to store particles
+    glGenBuffers(1, &particleVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, particleVBO);
+
+    // 2. Allocate enough memory for max particles
+    glBufferData(GL_ARRAY_BUFFER, MAX_PARTICLES * sizeof(float2), nullptr, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    // 3. Register the buffer with CUDA
+    cudaGraphicsGLRegisterBuffer(&particleCudaResource, particleVBO, cudaGraphicsMapFlagsWriteDiscard);
+}
 
 void RenderParticles()
 {
     if (ps.num_particles == 0) return;
 
-    std::vector<float2> h_Xp(ps.num_particles);
-    cudaMemcpy(h_Xp.data(), ps.d_Xp, ps.num_particles * sizeof(float2), cudaMemcpyDeviceToHost);
+    // 1. Map the OpenGL resource to CUDA ptr
+    cudaGraphicsMapResources(1, &particleCudaResource, 0);
+
+    float2* d_vbo_ptr;
+    size_t num_bytes;
+    cudaGraphicsResourceGetMappedPointer((void**)&d_vbo_ptr, &num_bytes, particleCudaResource);
+
+    // 2. Copy directly from device to device
+    cudaMemcpy(d_vbo_ptr, ps.d_Xp, ps.num_particles * sizeof(float2), cudaMemcpyDeviceToDevice);
+
+    // 3. Unmap the resource so OpenGL can use it again
+    cudaGraphicsUnmapResources(1, &particleCudaResource, 0);
+
+    // 4. Render
+    glBindBuffer(GL_ARRAY_BUFFER, particleVBO);
+    glEnableClientState(GL_VERTEX_ARRAY);
+
+    glVertexPointer(2, GL_FLOAT, 0, (void*)0);
 
     glColor3f(0.2f, 0.6f, 1.0f);
+    glEnable(GL_POINT_SMOOTH);
     glPointSize(12);
 
-    glEnable(GL_POINT_SMOOTH);
-    glBegin(GL_POINTS);
-    for (int i = 0; i < ps.num_particles; ++i) {
-        glVertex2f(h_Xp[i].x, h_Xp[i].y);
-    }
-    glEnd();
+    glDrawArrays(GL_POINTS, 0, ps.num_particles);
+
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 void RenderGridNodes() {
@@ -148,6 +186,13 @@ GLFWwindow* initGLFWContext()
     }
 
     glfwMakeContextCurrent(window);
+
+    GLenum err = glewInit();
+    if (GLEW_OK != err) {
+        std::cerr << "[CRASH] Error initializing GLEW: " << glewGetErrorString(err) << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
     return window;
 }
 
@@ -161,6 +206,11 @@ void initGLContext()
 
     glViewport(0, 0, (GLsizei)X_WINDOW, (GLsizei)Y_WINDOW);
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+}
+
+void Free_OpenGL() {
+    cudaGraphicsUnregisterResource(particleCudaResource);
+    glDeleteBuffers(1, &particleVBO);
 }
 #pragma endregion
 
@@ -179,16 +229,22 @@ int main()
 
         initGLContext();
 
+        InitOpenGLInterop();
+
         while (!glfwWindowShouldClose(window))
         {
             glClear(GL_COLOR_BUFFER_BIT);
 
-            // Only update if not paused, or if single-step was requested
+            // window renders every frame but simulation runs (in substeps) only when unpased
             if (!pauseSimulation || stepOnce) {
-                Update();
+
+                for(int step = 0; step < SIM_SUBSTEPS; step++)
+                    Update();
+
                 stepOnce = false;
             }
-            RenderGridNodes();
+
+            //RenderGridNodes();
             RenderParticles();
 
             glfwSwapBuffers(window);
@@ -198,6 +254,7 @@ int main()
         ps.free();
         grid.free();
         glfwTerminate();
+        Free_OpenGL();
     }
     catch (const std::exception& e) {
         std::cerr << "[CRASH] Exception caught: " << e.what() << std::endl;

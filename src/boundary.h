@@ -37,7 +37,7 @@ public:
     void InitializeDefaultBorders() {
         h_borders.clear();
 
-        float cub = CUB;
+        float cub = INT_CELL_SPAN;
         float gridX = static_cast<float>(X_GRID);
         float gridY = static_cast<float>(Y_GRID);
 

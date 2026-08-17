@@ -30,11 +30,13 @@ add_executable(${PROJECT_NAME} ${SRC_FILES})
 # Find packages
 find_package(OpenGL REQUIRED)
 find_package(glfw3 REQUIRED)
+find_package(GLEW REQUIRED)
 
 # Link dependencies
 target_link_libraries(${PROJECT_NAME} PRIVATE 
     glfw               
-    OpenGL::GL          
+    OpenGL::GL
+    GLEW::GLEW          
 )
 
 # Include directory so headers resolve nicely
