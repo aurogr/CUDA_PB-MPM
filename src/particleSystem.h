@@ -19,7 +19,7 @@ public:
     float* Ap;												// For computation purpose
     float* Jp;												// Deformation gradient (det)
 
-    void initialize(int count, const std::vector<float2>& h_Xp, const std::vector<float2>& h_Vp) {
+    void initialize(int count, const std::vector<float2>& h_Xp, const std::vector<float2>& h_Vp, float vp0 = 1.14f, float mp = 0.0005f) {
         num_particles = count;
 
         cudaMalloc(&d_Vp0, MAX_PARTICLES * sizeof(float));
@@ -34,12 +34,8 @@ public:
             cudaMemcpy(d_Xp, h_Xp.data(), num_particles * sizeof(float2), cudaMemcpyHostToDevice);
             cudaMemcpy(d_Vp, h_Vp.data(), num_particles * sizeof(float2), cudaMemcpyHostToDevice);
 
-            // Initial material properties (Water baseline)
-            float particle_mass = 0.0005f;
-            float p_vol = 1.14f; // Initial particle volume estimate in 2D cell
-
-            std::vector<float> h_Mp(num_particles, particle_mass);
-            std::vector<float> h_Vp0(num_particles, p_vol);
+            std::vector<float> h_Mp(num_particles, mp);
+            std::vector<float> h_Vp0(num_particles, vp0);
             std::vector<float4> h_Bp(num_particles, make_float4(0, 0, 0, 0));
             std::vector<float> h_Ap(num_particles, 0.0f);
             std::vector<float> h_Jp(num_particles, 1.0f);
@@ -56,7 +52,7 @@ public:
         int add_count = static_cast<int>(new_pos.size());
         if (add_count == 0) return;
 
-        // Prevent overflow beyond pre-allocated bound
+        // Prevent overflow
         if (num_particles + add_count >= MAX_PARTICLES) {
             add_count = std::max(0, MAX_PARTICLES - num_particles);
             std::cout << "\nReached particles limit. Cannot add more particles to simulation.\n";
@@ -64,14 +60,14 @@ public:
 
         int offset = num_particles;
 
-        // Prepare initial state vectors for new batch
+        // Create new batch of vectors
         std::vector<float> h_Vp0(add_count, vp0);
         std::vector<float> h_Mp(add_count, mp);
         std::vector<float4> h_Bp(add_count, make_float4(0, 0, 0, 0));
         std::vector<float> h_Ap(add_count, 0.0f);
         std::vector<float> h_Jp(add_count, 1.0f);
 
-        // Copy directly to the end of active data (pointer arithmetic: d_Xp + offset)
+        // Upload the new batch to memory, at the end of the last used position, on the reserved space
         cudaMemcpy(d_Xp + offset, new_pos.data(), add_count * sizeof(float2), cudaMemcpyHostToDevice);
         cudaMemcpy(d_Vp + offset, new_vel.data(), add_count * sizeof(float2), cudaMemcpyHostToDevice);
         cudaMemcpy(d_Vp0 + offset, h_Vp0.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
@@ -80,7 +76,7 @@ public:
         cudaMemcpy(Ap + offset, h_Ap.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(Jp + offset, h_Jp.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
 
-        // Simply bump the active count
+        // Update count
         num_particles += add_count;
     }
 

@@ -151,7 +151,7 @@ __global__ void updateGrid_kernel(const float* d_Mi, float2* d_Vi, float2* d_Vi_
     d_Vi[i].x /= Mi;
     d_Vi[i].y /= Mi;
 
-    // Update velocity, force, and apply updated force
+    // 2. Update velocity
     // time integration on grid: 
     // v_i^(n+1) = v_ì^(n) + (dt/mi)*(f_i + f_ext)
     // f_ext = m_i * G
@@ -163,16 +163,17 @@ __global__ void updateGrid_kernel(const float* d_Mi, float2* d_Vi, float2* d_Vi_
     d_Vi[i].x += d_Fi[i].x;
     d_Vi[i].y += d_Fi[i].y;
 
-    // 5. Node Coordinates (Xi)
+    // 3. Compute collision velocity
+    // 3.1 Get node coordinates
     int gx = i % (gridX + 1);
     int gy = i / (gridX + 1);
     float2 Xi = make_float2((float)gx, (float)gy);
 
-    // 6. Node Collisions (Vi_col)
+    // 3.2 Compute and update
     float2 Vi_col = ApplyNodeCollision(Xi, d_Vi[i], bounds, dt);
     d_Vi_Col[i] = Vi_col;
 
-    // TODO: Apply NodeFrictions logic here if applicable
+    // 4. TODO: Apply friction
     d_Vi_Fri[i] = Vi_col;
 }
 
@@ -237,7 +238,7 @@ __global__ void g2p_kernel(float2* d_Xp, float2* d_Vp, float* d_Jp, float4* d_Bp
             T.z += d_Vi_col[node_idx].y * gradW_x; // T[1][0] = dvy/dx
             T.w += d_Vi_col[node_idx].y * gradW_y; // T[1][1] = dvy/dy
 
-            //// Particle advection:
+            // 3.7 Accumulate velocity for each particle based on the weight of the current node
             new_Vp_col.x += Wip * d_Vi_col[node_idx].x;
             new_Vp_col.y += Wip * d_Vi_col[node_idx].y;
         }
@@ -247,21 +248,21 @@ __global__ void g2p_kernel(float2* d_Xp, float2* d_Vp, float* d_Jp, float4* d_Bp
     d_Vp[p] = new_Vp_fri;
     d_Bp[p] = new_Bp;
 
-    // 1. Position advection using collision velocity
+    // 5. Position advection using collision velocity
     Xp.x += dt * new_Vp_col.x;
     Xp.y += dt * new_Vp_col.y;
 
-    // 2. Clamp particle position inside the active domain boundary
+    // 6. Clamp particle position inside the active domain boundary
     const float padding = 2.0f;
     Xp.x = fminf(fmaxf(Xp.x, padding), (float)gridX - padding);
     Xp.y = fminf(fmaxf(Xp.y, padding), (float)gridY - padding);
 
     d_Xp[p] = Xp;
 
-    // 5. Nodal deformation
+    // 7. Nodal deformation
     float next_Jp = d_Jp[p] * (1.0f + dt * (T.x + T.w));
 
-    // 6. Prevent Volume Explosions
+    // 8. Prevent Volume Explosions
     d_Jp[p] = fminf(fmaxf(next_Jp, 0.6f), 1.5f);
 }
 
