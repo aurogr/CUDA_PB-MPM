@@ -49,8 +49,8 @@ __device__ Vector2f ApplyNodeCollision(
     return Vi_col;
 }
 
-__global__ void p2g_kernel(const float* d_Vp0, const Vector2f* d_Xp, const Vector2f* d_Vp, const float* d_Mp, const Matrix2f* d_Bp, // Matrix 2x2 stored as float4: x=00, y=01, z=10, w=11
-    float* d_Jp, float* d_Ap, // these are inherent to the constitutive model and should not be here in a future
+__global__ void p2g_kernel(const float* d_Vp0, const Vector2f* d_Xp, const Vector2f* d_Vp, const float* d_Mp, const Matrix2f* d_Bp,
+    float* d_Jp, float* d_Ap, // TODO: these are inherent to the constitutive model and should not be here in a future
     float* d_Mi, Vector2f* d_Vi, Vector2f* d_Fi, const float dt, const int num_particles, const int gridX, const int gridY)
 {
     // 1. Get particle (thread per particle) and its characteristics
@@ -120,7 +120,8 @@ __global__ void p2g_kernel(const float* d_Vp0, const Vector2f* d_Xp, const Vecto
     }
 }
 
-__global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d_Vi_Col, Vector2f* d_Vi_Fri, Vector2f* d_Fi, const float dt, const float G, const int num_nodes, const int gridX, const int gridY, BoundaryData bounds) {
+__global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d_Vi_Col, Vector2f* d_Vi_Fri, Vector2f* d_Fi,
+    const float dt, const float G, const int num_nodes, const int gridX, const int gridY, BoundaryData bounds) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= num_nodes) return;
 
@@ -162,7 +163,7 @@ __global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d
     d_Vi_Fri[i] = Vi_col;
 }
 
-__global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, float* d_Jp, Matrix2f* d_Bp, // Matrix 2x2 stored as float4: x=00, y=01, z=10, w=11
+__global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, float* d_Jp, Matrix2f* d_Bp,
     Vector2f* d_Vi_col, Vector2f* d_Vi_fri, const int num_particles, const int gridX, const int gridY, const float dt)
 {
     // 1. Get particle (thread per particle) and its characteristics
