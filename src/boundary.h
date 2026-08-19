@@ -15,9 +15,9 @@ enum BoundaryType {
 // Simple POD structure for a single line segment boundary.
 // Works seamlessly inside CUDA __device__ and __global__ functions.
 struct LineSegmentBoundary {
-	float2 start;
-	float2 end;
-	float2 normal;
+	Vector2f start;
+    Vector2f end;
+    Vector2f normal;
 	int type;
 };
 
@@ -42,16 +42,16 @@ public:
         float gridY = static_cast<float>(Y_GRID);
 
         // Left border
-        h_borders.push_back({ make_float2(cub, cub), make_float2(cub, gridY - cub), make_float2(1.0f, 0.0f), SEPARATING });
+        h_borders.push_back({ Vector2f(cub, cub), Vector2f(cub, gridY - cub), Vector2f(1.0f, 0.0f), SEPARATING });
 
         // Right border
-        h_borders.push_back({ make_float2(gridX - cub, cub), make_float2(gridX - cub, gridY - cub), make_float2(-1.0f, 0.0f), SEPARATING });
+        h_borders.push_back({ Vector2f(gridX - cub, cub), Vector2f(gridX - cub, gridY - cub), Vector2f(-1.0f, 0.0f), SEPARATING });
 
         // Bottom border
-        h_borders.push_back({ make_float2(cub, cub), make_float2(gridX - cub, cub), make_float2(0.0f, 1.0f), SEPARATING });
+        h_borders.push_back({ Vector2f(cub, cub), Vector2f(gridX - cub, cub), Vector2f(0.0f, 1.0f), SEPARATING });
 
         // Top border
-        h_borders.push_back({ make_float2(cub, gridY - cub), make_float2(gridX - cub, gridY - cub), make_float2(0.0f, -1.0f), SEPARATING });
+        h_borders.push_back({ Vector2f(cub, gridY - cub), Vector2f(gridX - cub, gridY - cub), Vector2f(0.0f, -1.0f), SEPARATING });
 
         count = static_cast<int>(h_borders.size());
     }

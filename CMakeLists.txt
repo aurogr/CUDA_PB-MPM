@@ -23,6 +23,7 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/boundary.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/particleSystem.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/constants.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/types.h"
 )
 
 add_executable(${PROJECT_NAME} ${SRC_FILES})

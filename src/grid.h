@@ -3,6 +3,7 @@
 #include <GLFW/glfw3.h>
 
 #include "constants.h"
+#include "types.h"
 
 class Grid {
 public:
@@ -13,10 +14,10 @@ public:
 
     // --- GPU Device Pointers ---
     float* d_Mi = nullptr; // Node mass
-    float2* d_Vi = nullptr; // Node velocity
-    float2* d_Vi_col = nullptr; // Node velocity after collision
-    float2* d_Vi_fri = nullptr; // Node velocity after friction
-    float2* d_Fi = nullptr; // Force applied to node
+    Vector2f* d_Vi = nullptr; // Node velocity
+    Vector2f* d_Vi_col = nullptr; // Node velocity after collision
+    Vector2f* d_Vi_fri = nullptr; // Node velocity after friction
+    Vector2f* d_Fi = nullptr; // Force applied to node
 
     void initialize(int res_x, int res_y) {
         grid_x = res_x;
@@ -24,20 +25,20 @@ public:
         num_nodes = (grid_x + 1) * (grid_y + 1);
 
         cudaMalloc(&d_Mi, num_nodes * sizeof(float));
-        cudaMalloc(&d_Vi, num_nodes * sizeof(float2));
-        cudaMalloc(&d_Vi_col, num_nodes * sizeof(float2));
-        cudaMalloc(&d_Vi_fri, num_nodes * sizeof(float2));
-        cudaMalloc(&d_Fi, num_nodes * sizeof(float2));
+        cudaMalloc(&d_Vi, num_nodes * sizeof(Vector2f));
+        cudaMalloc(&d_Vi_col, num_nodes * sizeof(Vector2f));
+        cudaMalloc(&d_Vi_fri, num_nodes * sizeof(Vector2f));
+        cudaMalloc(&d_Fi, num_nodes * sizeof(Vector2f));
 
         clear();
     }
 
     void clear() {
         cudaMemset(d_Mi, 0, num_nodes * sizeof(float));
-        cudaMemset(d_Vi, 0, num_nodes * sizeof(float2));
-        cudaMemset(d_Vi_col, 0, num_nodes * sizeof(float2));
-        cudaMemset(d_Vi_fri, 0, num_nodes * sizeof(float2));
-        cudaMemset(d_Fi, 0, num_nodes * sizeof(float2));
+        cudaMemset(d_Vi, 0, num_nodes * sizeof(Vector2f));
+        cudaMemset(d_Vi_col, 0, num_nodes * sizeof(Vector2f));
+        cudaMemset(d_Vi_fri, 0, num_nodes * sizeof(Vector2f));
+        cudaMemset(d_Fi, 0, num_nodes * sizeof(Vector2f));
     }
 
     void free() {

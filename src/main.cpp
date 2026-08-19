@@ -12,6 +12,7 @@
 #include "grid.h"
 #include "particleSystem.h"
 #include "boundary.h"
+#include "types.h"
 
 #ifdef _WIN32
 extern "C" {
@@ -58,17 +59,17 @@ void Initialization()
     bounds = boundaryManager.GetDeviceData();
 
     // Spawn fluid block (e.g., 40x40 block of particles)
-    std::vector<float2> init_pos;
-    std::vector<float2> init_vel;
+    std::vector<Vector2f> init_pos;
+    std::vector<Vector2f> init_vel;
 
     ps.initialize(static_cast<int>(init_pos.size()), init_pos, init_vel);
 }
 
 void AddParticles() {
-    std::vector<float2> new_pos;
-    std::vector<float2> new_vel;
+    std::vector<Vector2f> new_pos;
+    std::vector<Vector2f> new_vel;
 
-    float2 v = make_float2(30.0f, 0.0f);
+    Vector2f v(30.0f, 0.0f);
 
     for (int p = 0; p < 8; ++p) {
         float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
@@ -107,7 +108,7 @@ void InitOpenGLInterop()
     glBindBuffer(GL_ARRAY_BUFFER, particleVBO);
 
     // 2. Allocate enough memory for max particles
-    glBufferData(GL_ARRAY_BUFFER, MAX_PARTICLES * sizeof(float2), nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, MAX_PARTICLES * sizeof(Vector2f), nullptr, GL_DYNAMIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     // 3. Register the buffer with CUDA
@@ -121,12 +122,12 @@ void RenderParticles()
     // 1. Map the OpenGL resource to CUDA ptr
     cudaGraphicsMapResources(1, &particleCudaResource, 0);
 
-    float2* d_vbo_ptr;
+    Vector2f* d_vbo_ptr;
     size_t num_bytes;
     cudaGraphicsResourceGetMappedPointer((void**)&d_vbo_ptr, &num_bytes, particleCudaResource);
 
     // 2. Copy directly from device to device
-    cudaMemcpy(d_vbo_ptr, ps.d_Xp, ps.num_particles * sizeof(float2), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(d_vbo_ptr, ps.d_Xp, ps.num_particles * sizeof(Vector2f), cudaMemcpyDeviceToDevice);
 
     // 3. Unmap the resource so OpenGL can use it again
     cudaGraphicsUnmapResources(1, &particleCudaResource, 0);

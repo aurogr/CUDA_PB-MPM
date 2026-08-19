@@ -28,23 +28,30 @@ void g2p(ParticleSystem& ps, const Grid& grid, float dt);
 /// <param name="w">Returns the 3 stencil weights</param>
 /// <param name="dw">Returns the 3 stencil weights derivatives>
 /// <returns>Starting node index for the 3-node stencil</returns>
-__device__ inline int InitQuadraticWeights(float Xp, float w[3], float dw[3])
+__device__ inline Vector2f InitQuadraticWeights(Vector2f Xp, Vector2f w[3], Vector2f dw[3])
 {
     // Quadratic stencil base node starts at floor(Xp - 0.5f)
-    int base_node = static_cast<int>(floorf(Xp - 0.5f));
+    Vector2f base_node(
+        floorf(Xp.x - 0.5f),
+        floorf(Xp.y - 0.5f)
+    );
 
     // Offset from the base node center
-    float offset = Xp - static_cast<float>(base_node);
+    Vector2f offset = Xp - base_node;
 
     // B-spline weights 
-    w[0] = 0.5f * (1.5f - offset) * (1.5f - offset);
-    w[1] = 0.75f - (offset - 1.0f) * (offset - 1.0f);
-    w[2] = 0.5f * (offset - 0.5f) * (offset - 0.5f);
+    Vector2f d0 = Vector2f(1.5f, 1.5f) - offset;
+    Vector2f d1 = offset - Vector2f(1.0f, 1.0f);
+    Vector2f d2 = offset - Vector2f(0.5f, 0.5f);
 
-    // gradients of weights (d/dXp)
-    dw[0] = offset - 1.5f;
-    dw[1] = -2.0f * (offset - 1.0f);
-    dw[2] = offset - 0.5f;
+    w[0] = Vector2f(0.5f * d0.x * d0.x, 0.5f * d0.y * d0.y);
+    w[1] = Vector2f(0.75f - d1.x * d1.x, 0.75f - d1.y * d1.y);
+    w[2] = Vector2f(0.5f * d2.x * d2.x, 0.5f * d2.y * d2.y);
+
+    // Gradients
+    dw[0] = offset - Vector2f(1.5f, 1.5f);
+    dw[1] = (offset - Vector2f(1.0f, 1.0f)) * -2.0f;
+    dw[2] = offset - Vector2f(0.5f, 0.5f);
 
     return base_node;
 }
