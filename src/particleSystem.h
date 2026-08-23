@@ -4,11 +4,50 @@
 #include "types.h"
 #include <vector>
 
+struct WaterData {
+    // constitutive model (water for now) 
+    float* d_Ap = nullptr; // For computation purpose
+    float* d_Jp = nullptr; // Deformation gradient (det)
+    
+    // constants for material (they could also be con constants.h)
+    const float RHO = 1.0;					// Density
+    const float K = 50.0;					// Bulk Modulus
+    const int   GAMMA = 3;					// Penalize deviation form incompressibility
+
+    void allocate(int max_particles) {
+        cudaMalloc(&d_Ap, max_particles * sizeof(float));
+        cudaMalloc(&d_Jp, max_particles * sizeof(float));
+
+        std::vector<float> h_Jp(max_particles, 1.0f);
+
+        cudaMemset(d_Ap, 0, max_particles * sizeof(float));
+        cudaMemcpy(d_Jp, h_Jp.data(), max_particles * sizeof(float), cudaMemcpyHostToDevice);
+    }
+    void free() {
+        cudaFree(d_Ap);
+        cudaFree(d_Jp);
+    }
+};
+
+struct ElasticData {
+    Matrix2f* d_Fp = nullptr;
+    float youngs_modulus;
+    float poissons_ratio;
+
+    void allocate(int max_particles) {
+        cudaMalloc(&d_Fp, max_particles * sizeof(Matrix2f));
+    }
+    void free() {
+        cudaFree(d_Fp);
+    }
+};
+
+template <typename MatData>
 class ParticleSystem {
 public:
     int num_particles = 0;
 
-    // --- GPU Device Pointers (allocated on GPU via cudaMalloc) ---
+    // --- GPU Device Pointers ---
     float* d_Vp0 = nullptr; // Initial particle volume (constant)
     float* d_Mp = nullptr; // Particle mass (constant)
 
@@ -16,9 +55,8 @@ public:
     Vector2f* d_Vp = nullptr; // Particle velocity
     Matrix2f* d_Bp = nullptr; // Particle APIC affine velocity field (2x2)
 
-    // constitutive model (water for now) 
-    float* Ap;												// For computation purpose
-    float* Jp;												// Deformation gradient (det)
+    // Material specific data is templated inside different structs
+    MatData d_Mat;
 
     void initialize(int count, const std::vector<Vector2f>& h_Xp, const std::vector<Vector2f>& h_Vp, float vp0 = 1.14f, float mp = 0.0005f) {
         num_particles = count;
@@ -28,25 +66,20 @@ public:
         cudaMalloc(&d_Xp, MAX_PARTICLES * sizeof(Vector2f));
         cudaMalloc(&d_Vp, MAX_PARTICLES * sizeof(Vector2f));
         cudaMalloc(&d_Bp, MAX_PARTICLES * sizeof(Matrix2f));
-        cudaMalloc(&Ap, MAX_PARTICLES * sizeof(float));
-        cudaMalloc(&Jp, MAX_PARTICLES * sizeof(float));
 
         if (num_particles > 0) {
-            cudaMemcpy(d_Xp, h_Xp.data(), num_particles * sizeof(Vector2f), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_Vp, h_Vp.data(), num_particles * sizeof(Vector2f), cudaMemcpyHostToDevice);
 
             std::vector<float> h_Mp(num_particles, mp);
             std::vector<float> h_Vp0(num_particles, vp0);
-            std::vector<Matrix2f> h_Bp(num_particles, make_float4(0, 0, 0, 0));
-            std::vector<float> h_Ap(num_particles, 0.0f);
-            std::vector<float> h_Jp(num_particles, 1.0f);
 
+            cudaMemcpy(d_Xp, h_Xp.data(), num_particles * sizeof(Vector2f), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_Vp, h_Vp.data(), num_particles * sizeof(Vector2f), cudaMemcpyHostToDevice);
             cudaMemcpy(d_Mp, h_Mp.data(), num_particles * sizeof(float), cudaMemcpyHostToDevice);
             cudaMemcpy(d_Vp0, h_Vp0.data(), num_particles * sizeof(float), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_Bp, h_Bp.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-            cudaMemcpy(Ap, h_Ap.data(), num_particles * sizeof(float), cudaMemcpyHostToDevice);
-            cudaMemcpy(Jp, h_Jp.data(), num_particles * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemset(d_Bp, 0, num_particles * sizeof(Matrix2f));
         }
+
+        d_Mat.allocate(MAX_PARTICLES);
     }
 
     void addParticlesMidSimulation(const std::vector<Vector2f>& new_pos, const std::vector<Vector2f>& new_vel, float vp0 = 1.14f, float mp = 0.0005f) {
@@ -65,8 +98,6 @@ public:
         std::vector<float> h_Vp0(add_count, vp0);
         std::vector<float> h_Mp(add_count, mp);
         std::vector<Matrix2f> h_Bp(add_count, Matrix2f(0, 0, 0, 0));
-        std::vector<float> h_Ap(add_count, 0.0f);
-        std::vector<float> h_Jp(add_count, 1.0f);
 
         // Upload the new batch to memory, at the end of the last used position, on the reserved space
         cudaMemcpy(d_Xp + offset, new_pos.data(), add_count * sizeof(Vector2f), cudaMemcpyHostToDevice);
@@ -74,8 +105,6 @@ public:
         cudaMemcpy(d_Vp0 + offset, h_Vp0.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(d_Mp + offset, h_Mp.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(d_Bp + offset, h_Bp.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-        cudaMemcpy(Ap + offset, h_Ap.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(Jp + offset, h_Jp.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
 
         // Update count
         num_particles += add_count;
@@ -84,6 +113,7 @@ public:
     void free() {
         cudaFree(d_Vp0); cudaFree(d_Mp);
         cudaFree(d_Xp);  cudaFree(d_Vp); cudaFree(d_Bp);
-        cudaFree(Ap);    cudaFree(Jp);
+
+        d_Mat.free();
     }
 };

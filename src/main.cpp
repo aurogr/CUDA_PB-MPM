@@ -22,7 +22,7 @@ extern "C" {
 
 /* Globals */
 Grid grid;
-ParticleSystem ps;
+ParticleSystem<WaterData> ps;
 BoundaryData bounds;
 
 int stepCount = 0;

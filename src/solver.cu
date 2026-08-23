@@ -5,6 +5,32 @@
 #include "boundary.h"
 #include "types.h"
 
+__device__ float ComputeAp(const WaterData& mat, int p, float Vp0) {
+
+    float Jp = mat.d_Jp[p];
+
+    float pressure = -mat.K * (1.0 / pow(Jp, mat.GAMMA) - 1.0);	// Tait's pressure formula
+
+    float currentVolume = Vp0 * Jp;
+
+    float Ap = pressure * currentVolume;
+
+    return Ap;
+}
+__device__ Matrix2f ComputeAp(const ElasticData& mat, int p, float Vp0) {
+    return Matrix2f();
+}
+
+__device__ void UpdateDeformation(const WaterData& mat, int p, float dt, Matrix2f T) {
+    mat.d_Jp[p] *= (1.0f + dt * T.trace());
+}
+
+__device__ void UpdateDeformation(const ElasticData& mat, int p, float dt, Matrix2f T) {
+
+}
+
+
+
 #pragma region Kernel Functions
 __device__ Vector2f ApplyNodeCollision(
     const Vector2f& Xi,
@@ -49,8 +75,9 @@ __device__ Vector2f ApplyNodeCollision(
     return Vi_col;
 }
 
-__global__ void p2g_kernel(const float* d_Vp0, const Vector2f* d_Xp, const Vector2f* d_Vp, const float* d_Mp, const Matrix2f* d_Bp,
-    float* d_Jp, float* d_Ap, // TODO: these are inherent to the constitutive model and should not be here in a future
+
+template <typename MatData>
+__global__ void p2g_kernel(const float* d_Vp0, const Vector2f* d_Xp, const Vector2f* d_Vp, const float* d_Mp, const Matrix2f* d_Bp, MatData d_mat,
     float* d_Mi, Vector2f* d_Vi, Vector2f* d_Fi, const float dt, const int num_particles, const int gridX, const int gridY)
 {
     // 1. Get particle (thread per particle) and its characteristics
@@ -62,18 +89,8 @@ __global__ void p2g_kernel(const float* d_Vp0, const Vector2f* d_Xp, const Vecto
     Vector2f Vp = d_Vp[p];
     Matrix2f Bp = d_Bp[p];
     float Mp = d_Mp[p];
-    float Ap = d_Ap[p];
-    float Jp = d_Jp[p];
 
-    // 1.2. Calculate stress derivative from particle constitutive model
-    // (IDEA: Here each particle could have an index that points to an enum of constitutive types? or a pointer to a type?)
-    // For now we only have water
-    const float RHO_water = 1.0;					// Density
-    const float K_water = 50.0;					// Bulk Modulus
-    const int   GAMMA_water = 3;					// Penalize deviation form incompressibility
-
-    float dJp = -K_water * (1.0 / pow(Jp, GAMMA_water) - 1.0);	// Deformation gradient increment
-    Ap = dJp * Vp0 * Jp;
+    auto Ap = ComputeAp(d_mat, p, Vp0);
 
     // 2. Find the bottom-left node closest to the particle of the 3x3 stencil (and init weights)
     Vector2f w[3], dw[3];
@@ -163,7 +180,8 @@ __global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d
     d_Vi_Fri[i] = Vi_col;
 }
 
-__global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, float* d_Jp, Matrix2f* d_Bp,
+template <typename MatData>
+__global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, Matrix2f* d_Bp, MatData d_mat,
     Vector2f* d_Vi_col, Vector2f* d_Vi_fri, const int num_particles, const int gridX, const int gridY, const float dt)
 {
     // 1. Get particle (thread per particle) and its characteristics
@@ -233,27 +251,24 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, float* d_Jp, Matrix2f
 
     d_Xp[p] = Xp;
 
-    // 7. Nodal deformation
-    float next_Jp = d_Jp[p] * (1.0f + dt * (T.x + T.w));
-
-    // 8. Prevent Volume Explosions
-    d_Jp[p] = fminf(fmaxf(next_Jp, 0.6f), 1.5f);
+    // 7. Update deformation
+    UpdateDeformation(d_mat, p, dt, T);
 }
 
 #pragma endregion
 
 #pragma region Host Solver Implementation
 
-void p2g(const ParticleSystem& ps, Grid& grid, float dt)
+template <typename MatData>
+void p2g(const ParticleSystem<MatData>& ps, Grid& grid, float dt)
 {
     if (ps.num_particles == 0) return;
     int blockSize = 256;
     int gridSize = (ps.num_particles + blockSize - 1) / blockSize;
 
     p2g_kernel << <gridSize, blockSize >> > (
-        ps.d_Vp0, ps.d_Xp, ps.d_Vp, ps.d_Mp, ps.d_Bp,
-        ps.Jp, ps.Ap, grid.d_Mi, grid.d_Vi, grid.d_Fi,
-        dt, ps.num_particles, grid.grid_x, grid.grid_y
+        ps.d_Vp0, ps.d_Xp, ps.d_Vp, ps.d_Mp, ps.d_Bp, ps.d_Mat,
+        grid.d_Mi, grid.d_Vi, grid.d_Fi, dt, ps.num_particles, grid.grid_x, grid.grid_y
         );
 }
 
@@ -268,16 +283,26 @@ void updateGrid(Grid& grid, float dt, BoundaryData bounds)
         );
 }
 
-void g2p(ParticleSystem& ps, const Grid& grid, float dt)
+template <typename MatData>
+void g2p(ParticleSystem<MatData>& ps, const Grid& grid, float dt)
 {
     if (ps.num_particles == 0) return;
     int blockSize = 256;
     int gridSize = (ps.num_particles + blockSize - 1) / blockSize;
 
     g2p_kernel << <gridSize, blockSize >> > (
-        ps.d_Xp, ps.d_Vp, ps.Jp, ps.d_Bp,
+        ps.d_Xp, ps.d_Vp, ps.d_Bp, ps.d_Mat,
         grid.d_Vi_col, grid.d_Vi_fri, ps.num_particles, grid.grid_x, grid.grid_y, dt
         );
 }
+
+#pragma endregion
+
+#pragma region Explicit instantiation
+template void p2g<WaterData>(const ParticleSystem<WaterData>& ps, Grid& grid, float dt);
+template void p2g<ElasticData>(const ParticleSystem<ElasticData>& ps, Grid& grid, float dt);
+
+template void g2p<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid, float dt);
+template void g2p<ElasticData>(ParticleSystem<ElasticData>& ps, const Grid& grid, float dt);
 
 #pragma endregion

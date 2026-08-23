@@ -53,14 +53,14 @@ struct alignas(16) Matrix2f {
     // Constructors
     __host__ __device__ Matrix2f() : x(0.0f), y(0.0f), z(0.0f), w(0.0f) {}
     __host__ __device__ Matrix2f(float m00, float m01, float m10, float m11)
-        : x(m00), y(m01), z(m10), w(m11) {}
+        : x(m00), y(m01), z(m10), w(m11) {
+    }
 
     // Interop with CUDA float4
     __host__ __device__ Matrix2f(const float4& f) : x(f.x), y(f.y), z(f.z), w(f.w) {}
     __host__ __device__ operator float4() const { return make_float4(x, y, z, w); }
 
     // Factory Helpers
-    __host__ __device__ static inline Matrix2f identity() { return Matrix2f(1.0f, 0.0f, 0.0f, 1.0f); }
     __host__ __device__ static inline Matrix2f outer_product(const Vector2f& a, const Vector2f& b) {
         return Matrix2f(a.x * b.x, a.x * b.y, a.y * b.x, a.y * b.y);
     }
@@ -102,6 +102,7 @@ struct alignas(16) Matrix2f {
     }
 };
 
+__host__ __device__ static inline Matrix2f identity() { return Matrix2f(1.0f, 0.0f, 0.0f, 1.0f); }
 
 __host__ __device__ static inline Matrix2f outer_product(const Vector2f& a, const Vector2f& b) {
     return Matrix2f(
