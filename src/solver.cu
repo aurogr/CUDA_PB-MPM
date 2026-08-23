@@ -22,13 +22,14 @@ __device__ Matrix2f ComputeAp(const ElasticData& mat, int p, float Vp0) {
 }
 
 __device__ void UpdateDeformation(const WaterData& mat, int p, float dt, Matrix2f T) {
-    mat.d_Jp[p] *= (1.0f + dt * T.trace());
+    float next_Jp = mat.d_Jp[p] * (1.0f + dt * (T.x + T.w));
+
+    mat.d_Jp[p] = fminf(fmaxf(next_Jp, 0.6f), 1.5f); // prevent volume explosions
 }
 
 __device__ void UpdateDeformation(const ElasticData& mat, int p, float dt, Matrix2f T) {
 
 }
-
 
 
 #pragma region Kernel Functions
