@@ -17,18 +17,75 @@ __device__ float ComputeAp(const WaterData& mat, int p, float Vp0) {
 
     return Ap;
 }
-__device__ Matrix2f ComputeAp(const ElasticData& mat, int p, float Vp0) {
-    return Matrix2f();
+
+__device__ Matrix2f ComputeAp(const SnowData& mat, int p, float Vp0) {
+    float Jp = mat.d_Jp[p];
+    Matrix2f Fe = mat.d_Fe[p];
+    Matrix2f Fp;
+
+    // Compute Lame parameters
+    float plastic_hardening_factor = std::exp(mat.KSI * (1.0 - Jp));
+    float mu = mat.MU_0 * plastic_hardening_factor;
+    float lambda = mat.LAMBDA_0 * plastic_hardening_factor;
+
+    // Polar decomposition to extract rotation (Fe = Re * Se)
+    Matrix2f Re, Se;
+    Fe.polar_decomp(&Re, &Se);
+
+    // Compute kirchhoff stress tensor
+    float Je = Fe.det();
+    auto stress_tensor = 2 * mu * (Fe - Re) * Fe.transpose() + lambda * Je * (Je - 1.0) * identity();
+
+    // Compute Ap
+    Matrix2f Ap = Vp0 * stress_tensor;
+
+    return Ap;
 }
 
 __device__ void UpdateDeformation(const WaterData& mat, int p, float dt, Matrix2f T) {
-    float next_Jp = mat.d_Jp[p] * (1.0f + dt * (T.x + T.w));
+    float next_Jp = mat.d_Jp[p] * (1.0f + dt * (T.m00 + T.m11));
 
     mat.d_Jp[p] = fminf(fmaxf(next_Jp, 0.6f), 1.5f); // prevent volume explosions
 }
 
-__device__ void UpdateDeformation(const ElasticData& mat, int p, float dt, Matrix2f T) {
+__device__ void UpdateDeformation(const SnowData& mat, int p, float dt, Matrix2f T) {
+    // 1. Advance elastic deformation gradient
+    Matrix2f Fe_trial = (identity() + dt * T) * mat.d_Fe[p];
 
+    // 2. Perform SVD
+    Matrix2f U, Sigma, V;
+    Fe_trial.svd(&U, &Sigma, &V);
+
+    // Ensure trial singular values are strictly positive
+    float s0_trial = fabsf(Sigma.m00);
+    float s1_trial = fabsf(Sigma.m11);
+
+    // 3. Clamp principal stretches to yield surface
+    float min_stretch = 1.0f - mat.THT_C;
+    float max_stretch = 1.0f + mat.THT_S;
+
+    float s0_clamped = fminf(fmaxf(s0_trial, min_stretch), max_stretch);
+    float s1_clamped = fminf(fmaxf(s1_trial, min_stretch), max_stretch);
+
+    // 4. Reconstruct clamped elastic deformation matrix
+    Matrix2f Sigma_clamped(s0_clamped, 0.0f,
+        0.0f, s1_clamped);
+
+    Matrix2f Fe_new = U * Sigma_clamped * V.transpose();
+
+    // 5. Update Plastic Determinant (J_P)
+    // J_p^(n+1) = J_p^n * (det(F_e_trial) / det(F_e_clamped))
+    float det_trial = s0_trial * s1_trial;
+    float det_clamped = s0_clamped * s1_clamped;
+
+    float Jp_new = mat.d_Jp[p];
+    if (det_clamped > 1e-6f) {
+        Jp_new *= (det_trial / det_clamped);
+    }
+
+    // Write back to GPU global memory
+    mat.d_Fe[p] = Fe_new;
+    mat.d_Jp[p] = Jp_new;
 }
 
 
@@ -301,9 +358,9 @@ void g2p(ParticleSystem<MatData>& ps, const Grid& grid, float dt)
 
 #pragma region Explicit instantiation
 template void p2g<WaterData>(const ParticleSystem<WaterData>& ps, Grid& grid, float dt);
-template void p2g<ElasticData>(const ParticleSystem<ElasticData>& ps, Grid& grid, float dt);
+template void p2g<SnowData>(const ParticleSystem<SnowData>& ps, Grid& grid, float dt);
 
 template void g2p<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid, float dt);
-template void g2p<ElasticData>(ParticleSystem<ElasticData>& ps, const Grid& grid, float dt);
+template void g2p<SnowData>(ParticleSystem<SnowData>& ps, const Grid& grid, float dt);
 
 #pragma endregion

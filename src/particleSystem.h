@@ -14,31 +14,72 @@ struct WaterData {
     const float K = 50.0;					// Bulk Modulus
     const int   GAMMA = 3;					// Penalize deviation form incompressibility
 
-    void allocate(int max_particles) {
-        cudaMalloc(&d_Ap, max_particles * sizeof(float));
-        cudaMalloc(&d_Jp, max_particles * sizeof(float));
+    void allocate(int num_particles) {
+        cudaMalloc(&d_Ap, MAX_PARTICLES * sizeof(float));
+        cudaMalloc(&d_Jp, MAX_PARTICLES * sizeof(float));
 
-        std::vector<float> h_Jp(max_particles, 1.0f);
+        std::vector<float> h_Jp(num_particles, 1.0f);
 
-        cudaMemset(d_Ap, 0, max_particles * sizeof(float));
-        cudaMemcpy(d_Jp, h_Jp.data(), max_particles * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemset(d_Ap, 0, num_particles * sizeof(float));
+        cudaMemcpy(d_Jp, h_Jp.data(), num_particles * sizeof(float), cudaMemcpyHostToDevice);
     }
+
+    void addParticlesMidSimulation(int add_count, int offset) {
+
+        // Create new batch of vectors
+        std::vector<float> h_Jp(add_count, 1.0f);
+
+        // Upload the new batch to memory, at the end of the last used position, on the reserved space
+        cudaMemset(d_Ap + offset, 0, add_count * sizeof(float));
+        cudaMemcpy(d_Jp + offset, h_Jp.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
+    }
+
     void free() {
         cudaFree(d_Ap);
         cudaFree(d_Jp);
     }
 };
 
-struct ElasticData {
-    Matrix2f* d_Fp = nullptr;
-    float youngs_modulus;
-    float poissons_ratio;
+struct SnowData {
 
-    void allocate(int max_particles) {
-        cudaMalloc(&d_Fp, max_particles * sizeof(Matrix2f));
+    Matrix2f* d_Fe; // Elastic deformation gradient
+    float* d_Jp;    // Plastic volume determinant
+
+    // CONSTANTS
+    const double THT_C = 2.0e-2;				// Critical compression
+    const double THT_S = 6.0e-3;				// Critical stretch
+    const double KSI = 10;						// Hardening coefficient
+    const double RHO = 4.0e2;					// Density
+    const double E = 1.4e5;						// Young's modulus
+    const double V = 0.2;						// Poisson's ratio
+
+    const float MU_0 = E / (1.0 + V) / 2.0;      // Base shear modulus
+    const float LAMBDA_0 = E * V / (1.0 + V) / (1.0 - 2.0 * V);  // Base Lame's first parameter
+
+
+    void allocate(int num_particles) {
+        cudaMalloc(&d_Fe, MAX_PARTICLES * sizeof(Matrix2f));
+        cudaMalloc(&d_Jp, MAX_PARTICLES * sizeof(float));
+
+        std::vector<Matrix2f> h_Fe(num_particles, identity());
+        std::vector<float> h_Jp(num_particles, 1.0);
+
+        cudaMemcpy(d_Fe, h_Fe.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_Jp, h_Jp.data(), num_particles * sizeof(float), cudaMemcpyHostToDevice);
+    }
+    void addParticlesMidSimulation(int add_count, int offset) {
+
+        // Create new batch of vectors
+        std::vector<Matrix2f> h_Fe(add_count, identity());
+        std::vector<float> h_Jp(add_count, 1.0);
+
+        // Upload the new batch to memory, at the end of the last used position, on the reserved space
+        cudaMemcpy(d_Fe + offset, h_Fe.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_Jp + offset, h_Jp.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
     }
     void free() {
-        cudaFree(d_Fp);
+        cudaFree(d_Fe);
+        cudaFree(d_Jp);
     }
 };
 
@@ -79,7 +120,7 @@ public:
             cudaMemset(d_Bp, 0, num_particles * sizeof(Matrix2f));
         }
 
-        d_Mat.allocate(MAX_PARTICLES);
+        d_Mat.allocate(num_particles);
     }
 
     void addParticlesMidSimulation(const std::vector<Vector2f>& new_pos, const std::vector<Vector2f>& new_vel, float vp0 = 1.14f, float mp = 0.0005f) {
@@ -108,6 +149,8 @@ public:
 
         // Update count
         num_particles += add_count;
+
+        d_Mat.addParticlesMidSimulation(add_count, offset);
     }
 
     void free() {

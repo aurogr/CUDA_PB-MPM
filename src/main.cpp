@@ -14,15 +14,9 @@
 #include "boundary.h"
 #include "types.h"
 
-#ifdef _WIN32
-extern "C" {
-    __declspec(dllexport) unsigned long NvOptimusEnablement = 0x00000001;
-}
-#endif
-
 /* Globals */
 Grid grid;
-ParticleSystem<WaterData> ps;
+ParticleSystem<SnowData> ps;
 BoundaryData bounds;
 
 int stepCount = 0;
@@ -49,6 +43,7 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 }
 
 #pragma region Material Point Method Algorithm
+
 void Initialization()
 {
     grid.initialize(X_GRID, Y_GRID);
@@ -62,7 +57,35 @@ void Initialization()
     std::vector<Vector2f> init_pos;
     std::vector<Vector2f> init_vel;
 
-    ps.initialize(static_cast<int>(init_pos.size()), init_pos, init_vel);
+    if (INIT_SPHERE) {
+        Vector2f center(static_cast<float>(X_GRID) * 0.5f, static_cast<float>(Y_GRID) * 0.5f);
+        float radius = fminf(static_cast<float>(X_GRID), static_cast<float>(Y_GRID)) * 0.35f;
+
+        // 0.5f = 2x2 particles per grid cell (keeps count safely under MAX_PARTICLES)
+        float spacing = 0.5f;
+        Vector2f initial_velocity(0.0f, 0.0f);
+
+        float r_sq = radius * radius;
+        for (float x = center.x - radius; x <= center.x + radius; x += spacing) {
+            for (float y = center.y - radius; y <= center.y + radius; y += spacing) {
+                float dx = x - center.x;
+                float dy = y - center.y;
+
+                if (dx * dx + dy * dy <= r_sq) {
+                    init_pos.push_back(Vector2f(x, y));
+                    init_vel.push_back(initial_velocity);
+                }
+            }
+        }
+
+        // Correct volume & mass derived from spacing
+        float vp0 = spacing * spacing;          // 0.25
+        float rho = 400.0f;                      // Snow density (kg/m^3)
+        float mp = vp0 * rho * 0.001f;          // Scaled particle mass
+
+        ps.initialize(static_cast<int>(init_pos.size()), init_pos, init_vel, vp0, mp);
+    } else
+        ps.initialize(static_cast<int>(init_pos.size()), init_pos, init_vel);
 }
 
 void AddParticles() {
@@ -86,7 +109,7 @@ void AddParticles() {
 
 void Update()
 {
-    if (ps.num_particles < MAX_PARTICLES && stepCount % EMISSION_INTERVAL == 0) {
+    if (ps.num_particles < MAX_PARTICLES && stepCount % EMISSION_INTERVAL == 0 && ADD_MID_SIM) {
         AddParticles();
     }
 
