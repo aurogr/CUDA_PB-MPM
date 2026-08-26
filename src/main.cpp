@@ -17,7 +17,7 @@
 /* Globals */
 Grid grid;
 ParticleSystem<SnowData> ps;
-BoundaryData bounds;
+LevelSetCollisionManager collisionManager;
 
 int stepCount = 0;
 
@@ -48,12 +48,44 @@ void Initialization()
 {
     grid.initialize(X_GRID, Y_GRID);
 
-    BoundaryManager boundaryManager;
-    boundaryManager.InitializeDefaultBorders();
-    boundaryManager.CopyToDevice();
-    bounds = boundaryManager.GetDeviceData();
+    // Add collision objects
+    float wallThickness = 2.0f; // Thickness of the solid wall
+    float wall_friction = 0.2f;
 
-    // Spawn fluid block (e.g., 40x40 block of particles)
+    // Left border
+    collisionManager.addBox(
+        Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f),
+        Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f),
+        0.0f, wall_friction
+    );
+
+    // Right Border 
+    collisionManager.addBox(
+        Vector2f(X_GRID - wallThickness * 0.5f, Y_GRID * 0.5f),
+        Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f),
+        0.0f, wall_friction
+    );
+
+    // Bottom Border
+    collisionManager.addBox(
+        Vector2f(X_GRID * 0.5f, wallThickness * 0.5f),
+        Vector2f(X_GRID * 0.5f, wallThickness * 0.5f),
+        0.0f, wall_friction
+    );
+
+    // Top Border
+    collisionManager.addBox(
+        Vector2f(X_GRID * 0.5f, Y_GRID - wallThickness * 0.5f),
+        Vector2f(X_GRID * 0.5f, wallThickness * 0.5f),
+        0.0f, wall_friction
+    );
+
+    // Collider sphere
+    collisionManager.addSphere(Vector2f(75.0f, 20.0f), 10.0f, .3f);
+
+    collisionManager.copyToDevice();
+
+    // Spawn an initial shape of fluid
     std::vector<Vector2f> init_pos;
     std::vector<Vector2f> init_vel;
 
@@ -109,7 +141,7 @@ void Update()
 
     grid.clear();
     p2g(ps, grid, PHYSICS_DT);
-    updateGrid(grid, PHYSICS_DT, bounds);
+    updateGrid(grid, PHYSICS_DT, collisionManager.getDeviceData());
     g2p(ps, grid, PHYSICS_DT);
 }
 #pragma endregion
@@ -190,6 +222,69 @@ void RenderGridBackground()
     glEnd();
 }
 
+void RenderColliders() {
+    glColor3f(.5f, .0f, .0f);
+
+    for (const auto& obj : collisionManager.h_objects) {
+        for (const auto& obj : collisionManager.h_objects) {
+            if (obj.type == 1) {
+                float cx = obj.center.x;
+                float cy = obj.center.y;
+                float hx = obj.size.x; // Half-width
+                float hy = obj.size.y; // Half-height
+
+                if (obj.rotation == 0.0f) {
+                    glBegin(GL_QUADS);
+                    glVertex2f(cx - hx, cy - hy); // Bottom-left
+                    glVertex2f(cx + hx, cy - hy); // Bottom-right
+                    glVertex2f(cx + hx, cy + hy); // Top-right
+                    glVertex2f(cx - hx, cy + hy); // Top-left
+                    glEnd();
+                }
+                else {
+                    float c = cosf(obj.rotation);
+                    float s = sinf(obj.rotation);
+
+                    auto rotatePoint = [cx, cy, c, s](float localX, float localY) {
+                        float rx = c * localX - s * localY;
+                        float ry = s * localX + c * localY;
+                        return Vector2f(cx + rx, cy + ry);
+                        };
+
+                    Vector2f bl = rotatePoint(-hx, -hy);
+                    Vector2f br = rotatePoint(hx, -hy);
+                    Vector2f tr = rotatePoint(hx, hy);
+                    Vector2f tl = rotatePoint(-hx, hy);
+
+                    glBegin(GL_QUADS);
+                    glVertex2f(bl.x, bl.y);
+                    glVertex2f(br.x, br.y);
+                    glVertex2f(tr.x, tr.y);
+                    glVertex2f(tl.x, tl.y);
+                    glEnd();
+                }
+            }
+            else if (obj.type == 0) {
+                float cx = obj.center.x;
+                float cy = obj.center.y;
+                float radius = obj.size.x; // Assuming radius is stored in size.x
+                int segments = 20;         // Smoothness of the circle
+
+                glBegin(GL_TRIANGLE_FAN);
+                glVertex2f(cx, cy); // Center of the circle for the fan
+
+                for (int i = 0; i <= segments; ++i) {
+                    float theta = 2.0f * 3.1415926f * static_cast<float>(i) / static_cast<float>(segments);
+                    float x = cx + radius * cosf(theta);
+                    float y = cy + radius * sinf(theta);
+                    glVertex2f(x, y);
+                }
+                glEnd();
+            }
+        }
+    }
+}
+
 GLFWwindow* initGLFWContext()
 {
     if (!glfwInit()) exit(EXIT_FAILURE);
@@ -260,6 +355,7 @@ int main()
             }
 
             RenderGridBackground();
+            RenderColliders();
             RenderParticles();
 
             glfwSwapBuffers(window);

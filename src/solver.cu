@@ -74,51 +74,75 @@ __device__ void UpdateDeformation(const SnowData& mat, int p, float dt, Matrix2f
 
 
 #pragma region Kernel Functions
-__device__ void ApplyBoundaryCollisions(
-    const Vector2f& Xi, const Vector2f& Vi_in, const BoundaryData& bounds, const float dt,
-    Vector2f& Vi_col, Vector2f& Vi_fri)
-{
-    Vi_col = Vi_in;
-    Vi_fri = Vi_in;
 
-    for (int b = 0; b < bounds.count; ++b)
-    {
-        LineSegmentBoundary border = bounds.d_borders[b];
-        float distance = border.normal.dot(Xi - border.start);
+__device__ __inline__ void checkCollisions(const Vector2f Xi, Vector2f& Vi, CollisionManagerData colliders) {
+    for (int i = 0; i < colliders.count; i++) {
+        CollisionObjectData obj = colliders.d_objects[i];
+        float phi = 0.0f; // signed based distance function value
+        Vector2f n(0.0f, 0.0f);
 
-        float trial_dist = border.normal.dot(Xi + dt * Vi_col - border.start);
-        float dist_c = trial_dist - fminf(distance, 0.0f);
+        if (obj.type == 0) { // sphere
+            Vector2f r = Xi - obj.center;
+            float dist = r.length();
+            phi = dist - obj.size.x;
+            n = (dist > 1e-5f) ? (r / dist) : Vector2f(0.0f, 1.0f);
+        }
+        else if (obj.type == 1) { // box
+            Vector2f d_pos = Xi - obj.center;
 
-        // Trigger collision only if the node is touching or penetrating the boundary
-        if (distance < 0.0f || dist_c < 0.0f)
-        {
-            // Standard collision response (pushes out of the wall)
-            Vi_col -= (dist_c / dt) * border.normal;
+            if (obj.rotation != 0.0f) {
+                float c = cosf(-obj.rotation);
+                float s = sinf(-obj.rotation);
+                float x_rot = c * d_pos.x - s * d_pos.y;
+                float y_rot = s * d_pos.x + c * d_pos.y;
+                d_pos = Vector2f(x_rot, y_rot);
+            }
 
-            // Friction response based on collision velocity
-            Vector2f v_col = Vi_fri - (dist_c / dt) * border.normal;
-            float normal_vel = v_col.dot(border.normal);
+            Vector2f abs_pos(fabsf(d_pos.x), fabsf(d_pos.y));
+            Vector2f q = abs_pos - obj.size;
 
-            // We only care about friction if the node is pushing *into* the wall (normal_vel < 0)
-            // or sliding along it.
-            Vector2f tangent = v_col - normal_vel * border.normal;
-            float t_speed = tangent.length();
+            float outside_dist = Vector2f(fmaxf(q.x, 0.0f), fmaxf(q.y, 0.0f)).length();
+            float inside_dist = fminf(fmaxf(q.x, q.y), 0.0f);
+            phi = outside_dist + inside_dist;
 
-            if (t_speed > 1e-6f) {
-                // Normalize tangent to get the exact sliding direction unit vector
-                Vector2f tangent_dir = tangent / t_speed;
+            float sign_x = (d_pos.x < 0.0f) ? -1.0f : 1.0f;
+            float sign_y = (d_pos.y < 0.0f) ? -1.0f : 1.0f;
 
-                // Coulomb friction limit: max friction force scales with normal force magnitude
-                float max_friction_force = border.friction * fabsf(normal_vel);
-
-                // Reduce tangential speed by the friction drop, clamped to 0 so it doesn't reverse direction
-                float new_t_speed = fmaxf(0.0f, t_speed - max_friction_force);
-
-                // Reconstruct final friction velocity
-                Vi_fri = normal_vel * border.normal + new_t_speed * tangent_dir;
+            if (outside_dist > 0.0f) {
+                n = Vector2f((q.x > 0.0f) ? sign_x * (q.x / outside_dist) : 0.0f,
+                    (q.y > 0.0f) ? sign_y * (q.y / outside_dist) : 0.0f);
             }
             else {
-                Vi_fri = v_col;
+                if (q.x > q.y) n = Vector2f(sign_x, 0.0f);
+                else n = Vector2f(0.0f, sign_y);
+            }
+
+            if (obj.rotation != 0.0f) {
+                float c = cosf(obj.rotation);
+                float s = sinf(obj.rotation);
+                float nx = c * n.x - s * n.y;
+                float ny = s * n.x + c * n.y;
+                n = Vector2f(nx, ny);
+            }
+        }
+
+        if (phi < 1.0f) { // 1.0f because it is grid_spacing
+            Vector2f v_co(0.0f, 0.0f);
+            Vector2f v_rel = Vi - v_co;
+            float vn = v_rel.dot(n);
+
+            if (vn < 0.0f) {
+                Vector2f vt = v_rel - n * vn;
+                float vt_len = vt.length();
+
+                Vector2f v_rel_prime;
+                if (vt_len <= -obj.friction * vn) {
+                    v_rel_prime = Vector2f(0.0f, 0.0f);
+                }
+                else {
+                    v_rel_prime = vt + obj.friction * vn * (vt / vt_len);
+                }
+                Vi = v_rel_prime + v_co;
             }
         }
     }
@@ -186,8 +210,8 @@ __global__ void p2g_kernel(const float* d_Vp0, const Vector2f* d_Xp, const Vecto
     }
 }
 
-__global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d_Vi_Col, Vector2f* d_Vi_Fri, Vector2f* d_Fi,
-    const float dt, const float G, const int num_nodes, const int gridX, const int gridY, BoundaryData bounds) {
+__global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d_Fi,
+    const float dt, const float G, const int num_nodes, const int gridX, const int gridY, CollisionManagerData collisionData) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= num_nodes) return;
 
@@ -195,8 +219,6 @@ __global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d
 
     if (Mi < 1e-10f) {
         d_Vi[i] = make_float2(0.0f, 0.0f);
-        d_Vi_Col[i] = make_float2(0.0f, 0.0f);
-        d_Vi_Fri[i] = make_float2(0.0f, 0.0f);
         return;
     }
 
@@ -222,15 +244,12 @@ __global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d
     Vector2f Xi ((float)gx, (float)gy);
 
     // 3.2 Compute and update
-    Vector2f Vi_col, Vi_fri;
-    ApplyBoundaryCollisions(Xi, d_Vi[i], bounds, dt, Vi_col, Vi_fri);
-    d_Vi_Col[i] = Vi_col;
-    d_Vi_Fri[i] = Vi_fri;
+    checkCollisions(Xi, d_Vi[i], collisionData);
 }
 
 template <typename MatData>
 __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, Matrix2f* d_Bp, MatData d_mat,
-    Vector2f* d_Vi_col, Vector2f* d_Vi_fri, const int num_particles, const int gridX, const int gridY, const float dt)
+    Vector2f* d_Vi, const int num_particles, const int gridX, const int gridY, const float dt)
 {
     // 1. Get particle (thread per particle) and its characteristics
     int p = blockIdx.x * blockDim.x + threadIdx.x;
@@ -238,8 +257,7 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, Matrix2f* d_Bp, MatDa
 
     Vector2f Xp = d_Xp[p];
     Vector2f new_Xp (0.0f, 0.0f);
-    Vector2f new_Vp_fri (0.0f, 0.0f);
-    Vector2f new_Vp_col (0.0f, 0.0f);
+    Vector2f new_Vp (0.0f, 0.0f);
     Matrix2f new_Bp (0.0f, 0.0f, 0.0f, 0.0f);
 
     Matrix2f T (0.0f, 0.0f, 0.0f, 0.0f); // nodal deformation
@@ -266,10 +284,10 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, Matrix2f* d_Bp, MatDa
             if (Wip < 1e-10f) continue; // skip negligible contributions
 
             // 3.3 Accumulate particle velocity: Vp += Wip * Vi
-            new_Vp_fri += Wip * d_Vi_fri[node_idx];
+            new_Vp += Wip * d_Vi[node_idx];
 
             // 3.4 Accumulate B_p matrix: B_p += W_ip * (V_i outer_product dist)
-            new_Bp += Wip * outer_product(d_Vi_fri[node_idx], node - Xp);
+            new_Bp += Wip * outer_product(d_Vi[node_idx], node - Xp);
 
             // 3.5 Calculate 2D gradient components of the weight function
             Vector2f gradW(
@@ -278,24 +296,16 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, Matrix2f* d_Bp, MatDa
             );
 
             // 3.6 Accumulate velocity gradient matrix T = Vi ⊗ ∇Wip
-            T += Matrix2f::outer_product(d_Vi_col[node_idx], gradW);
-
-            // 3.7 Accumulate velocity for each particle based on the weight of the current node
-            new_Vp_col += Wip * d_Vi_col[node_idx];
+            T += Matrix2f::outer_product(d_Vi[node_idx], gradW);
         }
     }
 
     // 4. Write back the value calculated for the particle based on the nodes that influence it
-    d_Vp[p] = new_Vp_fri;
+    d_Vp[p] = new_Vp;
     d_Bp[p] = new_Bp;
 
     // 5. Position advection using collision velocity
-    Xp += dt * new_Vp_col;
-
-    // 6. Clamp particle position inside the active domain boundary
-    const float padding = 2.0f;
-    Xp.x = fminf(fmaxf(Xp.x, padding), (float)gridX - padding);
-    Xp.y = fminf(fmaxf(Xp.y, padding), (float)gridY - padding);
+    Xp += dt * new_Vp;
 
     d_Xp[p] = Xp;
 
@@ -320,14 +330,14 @@ void p2g(const ParticleSystem<MatData>& ps, Grid& grid, float dt)
         );
 }
 
-void updateGrid(Grid& grid, float dt, BoundaryData bounds)
+void updateGrid(Grid& grid, float dt, CollisionManagerData collisionData)
 {
     int blockSize = 256;
     int gridSize = (grid.num_nodes + blockSize - 1) / blockSize;
 
-    updateGrid_kernel << <gridSize, blockSize >> > (
-        grid.d_Mi, grid.d_Vi, grid.d_Vi_col, grid.d_Vi_fri, grid.d_Fi,
-        dt, -9.81f, grid.num_nodes, grid.grid_x, grid.grid_y, bounds
+    updateGrid_kernel <<<gridSize, blockSize >>> (
+        grid.d_Mi, grid.d_Vi, grid.d_Fi,
+        dt, -9.81f, grid.num_nodes, grid.grid_x, grid.grid_y, collisionData
         );
 }
 
@@ -340,7 +350,7 @@ void g2p(ParticleSystem<MatData>& ps, const Grid& grid, float dt)
 
     g2p_kernel << <gridSize, blockSize >> > (
         ps.d_Xp, ps.d_Vp, ps.d_Bp, ps.d_Mat,
-        grid.d_Vi_col, grid.d_Vi_fri, ps.num_particles, grid.grid_x, grid.grid_y, dt
+        grid.d_Vi, ps.num_particles, grid.grid_x, grid.grid_y, dt
         );
 }
 

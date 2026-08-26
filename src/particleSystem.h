@@ -12,7 +12,7 @@ struct WaterData {
     // constants for material (they could also be con constants.h)
     const float RHO = 1.0;					// Density
     const float K = 50.0;					// Bulk Modulus
-    const int   GAMMA = 3;					// Penalize deviation form incompressibility
+    const int   GAMMA = 10;					// Penalize deviation form incompressibility
 
     void allocate(int num_particles) {
         cudaMalloc(&d_Ap, MAX_PARTICLES * sizeof(float));
@@ -70,7 +70,7 @@ struct SnowData {
         cudaMemcpy(d_Fp, h_Fe.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
         cudaMemcpy(d_Jp, h_Jp.data(), num_particles * sizeof(float), cudaMemcpyHostToDevice);
     }
-    void addParticlesMidSimulation(int add_count, int offset) {
+    void addParticlesMidSimulation(int add_count, int offset) const {
 
         // Create new batch of vectors
         std::vector<Matrix2f> h_Fe(add_count, identity());
@@ -81,7 +81,7 @@ struct SnowData {
         cudaMemcpy(d_Fp + offset, h_Fe.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
         cudaMemcpy(d_Jp + offset, h_Jp.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
     }
-    void free() {
+    void free() const {
         cudaFree(d_Fe);
         cudaFree(d_Jp);
     }

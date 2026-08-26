@@ -1,75 +1,51 @@
 #pragma once
 
-#include <GLFW\glfw3.h>
-#include <cuda_runtime.h>
-#include <vector>
-
-#include "constants.h"
-
-struct LineSegmentBoundary {
-	Vector2f start;
-    Vector2f end;
-    Vector2f normal;
+struct CollisionObjectData {
+    int type; // 0 = sphere, 1 = box
+    Vector2f center;
+    Vector2f size;
+    float rotation;
     float friction;
 };
 
-struct BoundaryData {
-	LineSegmentBoundary* d_borders;
-	int count;                      
+struct CollisionManagerData {
+    CollisionObjectData* d_objects;
+    int count;
 };
 
-class BoundaryManager
-{
+class LevelSetCollisionManager {
 public:
+    std::vector<CollisionObjectData> h_objects;
+    CollisionObjectData* d_objects = nullptr;
+    int count = 0;
 
-    std::vector<LineSegmentBoundary> h_borders;
-	LineSegmentBoundary* d_borders;            
-	int count;
-
-    void InitializeDefaultBorders() {
-        h_borders.clear();
-
-        float cub = 1.5f;
-        float gridX = static_cast<float>(X_GRID);
-        float gridY = static_cast<float>(Y_GRID);
-
-        // Left border
-        h_borders.push_back({ Vector2f(cub, cub), Vector2f(cub, gridY - cub), Vector2f(1.0f, 0.0f), 5.0f });
-
-        // Right border
-        h_borders.push_back({ Vector2f(gridX - cub, cub), Vector2f(gridX - cub, gridY - cub), Vector2f(-1.0f, 0.0f), 5.0f });
-
-        // Bottom border
-        h_borders.push_back({ Vector2f(cub, cub), Vector2f(gridX - cub, cub), Vector2f(0.0f, 1.0f), 5.0f });
-
-        // Top border
-        h_borders.push_back({ Vector2f(cub, gridY - cub), Vector2f(gridX - cub, gridY - cub), Vector2f(0.0f, -1.0f), 5.0f });
-
-        count = static_cast<int>(h_borders.size());
+    void addSphere(Vector2f center, float radius, float friction) {
+        h_objects.push_back({ 0, center, Vector2f(radius, radius), 0.0f, friction });
+        count = static_cast<int>(h_objects.size());
     }
 
-    // Allocates and copies host borders onto the GPU
-    void CopyToDevice() {
+    void addBox(Vector2f center, Vector2f size, float rotation, float friction) {
+        h_objects.push_back({ 1, center, size, rotation, friction });
+        count = static_cast<int>(h_objects.size());
+    }
+
+    void copyToDevice() {
         if (count == 0) return;
+        if (d_objects != nullptr) cudaFree(d_objects);
 
-        if (d_borders != nullptr) {
-            cudaFree(d_borders);
-        }
-
-        size_t bytes = count * sizeof(LineSegmentBoundary);
-        cudaMalloc((void**)&d_borders, bytes);
-        cudaMemcpy(d_borders, h_borders.data(), bytes, cudaMemcpyHostToDevice);
+        size_t bytes = count * sizeof(CollisionObjectData);
+        cudaMalloc((void**)&d_objects, bytes);
+        cudaMemcpy(d_objects, h_objects.data(), bytes, cudaMemcpyHostToDevice);
     }
 
-    // Call this to retrieve a lightweight handle for kernel launches
-    BoundaryData GetDeviceData() const {
-        return BoundaryData{ d_borders, count };
+    CollisionManagerData getDeviceData() const {
+        return CollisionManagerData{ d_objects, count };
     }
 
-    void FreeDeviceMemory() {
-        if (d_borders != nullptr) {
-            cudaFree(d_borders);
-            d_borders = nullptr;
+    void free() {
+        if (d_objects != nullptr) {
+            cudaFree(d_objects);
+            d_objects = nullptr;
         }
     }
 };

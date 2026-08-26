@@ -15,7 +15,7 @@ void p2g(const ParticleSystem<MatData>& ps, Grid& grid, float dt);
 /// <summary>
 /// Update nodal velocities via time integration while enforcing boundary conditions.
 /// </summary>
-void updateGrid(Grid& grid, float dt, BoundaryData bounds);
+void updateGrid(Grid& grid, float dt, CollisionManagerData collisionData);
 
 /// <summary>
 /// Interpolate updated grid velocities back to particles. Update each particle’s deformation gradient based on local velocity gradients and advect particle positions using updated velocities.
