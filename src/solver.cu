@@ -9,7 +9,7 @@ __device__ float ComputeAp(const WaterData& mat, int p, float Vp0) {
 
     float Jp = mat.d_Jp[p];
 
-    float pressure = -mat.K * (1.0 / pow(Jp, mat.GAMMA) - 1.0);	// Tait's pressure formula
+    float pressure = -mat.K * (1.0f / pow(Jp, mat.GAMMA) - 1.0f);	// Tait's pressure formula
 
     float currentVolume = Vp0 * Jp;
 
@@ -24,7 +24,7 @@ __device__ Matrix2f ComputeAp(const SnowData& mat, int p, float Vp0) {
     Matrix2f Fp;
 
     // Compute Lame parameters
-    float plastic_hardening_factor = std::exp(mat.KSI * (1.0 - Jp));
+    float plastic_hardening_factor = std::exp(mat.KSI * (1.0f - Jp));
     float mu = mat.MU_0 * plastic_hardening_factor;
     float lambda = mat.LAMBDA_0 * plastic_hardening_factor;
 
@@ -34,7 +34,7 @@ __device__ Matrix2f ComputeAp(const SnowData& mat, int p, float Vp0) {
 
     // Compute kirchhoff stress tensor
     float Je = Fe.det();
-    auto stress_tensor = 2 * mu * (Fe - Re) * Fe.transpose() + lambda * Je * (Je - 1.0) * identity();
+    auto stress_tensor = 2.0f * mu * (Fe - Re) * Fe.transpose() + lambda * Je * (Je - 1.0f) * identity();
 
     // Compute Ap
     Matrix2f Ap = Vp0 * stress_tensor;
@@ -43,100 +43,85 @@ __device__ Matrix2f ComputeAp(const SnowData& mat, int p, float Vp0) {
 }
 
 __device__ void UpdateDeformation(const WaterData& mat, int p, float dt, Matrix2f T, Matrix2f* d_Bp) {
-    float next_Jp = mat.d_Jp[p] * (1.0f + dt * (T.m00 + T.m11));
-
-    mat.d_Jp[p] = fmaxf(next_Jp, 0.2f); // prevent volume explosions
+    mat.d_Jp[p] *= (1.0f + dt * (T.m00 + T.m11));
 }
 
 __device__ void UpdateDeformation(const SnowData& mat, int p, float dt, Matrix2f T, Matrix2f* d_Bp) {
-    // 1. Advance elastic deformation gradient
-    Matrix2f Fe_trial = (identity() + dt * T) * mat.d_Fe[p];
+    Matrix2f FeTr = (identity() + dt * T) * mat.d_Fe[p];
+    Matrix2f FpTr = mat.d_Fp[p];
 
-    // 2. Perform SVD
-    Matrix2f U, Sigma, V;
-    Fe_trial.svd(&U, &Sigma, &V);
+    Matrix2f U, V;
+    Vector2f Eps;
+    FeTr.svd(&U, &Eps, &V);
 
-    // Ensure trial singular values are strictly positive
-    float s0_trial = fabsf(Sigma.m00);
-    float s1_trial = fabsf(Sigma.m11);
+    Vector2f proj = Eps.clamp(1.0f - mat.THT_C, 1.0f + mat.THT_S);
 
-    // 3. Clamp principal stretches to yield surface
-    float min_stretch = 1.0f - mat.THT_C;
-    float max_stretch = 1.0f + mat.THT_S;
+    Matrix2f Fe = U.diag_product(proj) * V.transpose();
 
-    float s0_clamped = fminf(fmaxf(s0_trial, min_stretch), max_stretch);
-    float s1_clamped = fminf(fmaxf(s1_trial, min_stretch), max_stretch);
+    Vector2f plastic_factor(
+        proj.x / (Eps.x + 1e-12f),
+        proj.y / (Eps.y + 1e-12f)
+    );
+    Matrix2f DiagInvRatio(plastic_factor.x, 0.0f, 0.0f, plastic_factor.y);
+    
+    Matrix2f Fp = V * DiagInvRatio * V.transpose() * FpTr;
 
-    // 4. Reconstruct clamped elastic deformation matrix
-    Matrix2f Sigma_clamped(s0_clamped, 0.0f,
-        0.0f, s1_clamped);
-
-    Matrix2f Fe_new = U * Sigma_clamped * V.transpose();
-
-    // 5. Update Plastic Determinant (J_P)
-    // J_p^(n+1) = J_p^n * (det(F_e_trial) / det(F_e_clamped))
-    float det_trial = s0_trial * s1_trial;
-    float det_clamped = s0_clamped * s1_clamped;
-
-    float Jp_new = mat.d_Jp[p];
-    if (det_clamped > 1e-6f) {
-        Jp_new *= (det_trial / det_clamped);
-    }
-
-    if (s0_trial < min_stretch || s0_trial > max_stretch ||
-        s1_trial < min_stretch || s1_trial > max_stretch)
-    {
-        *d_Bp = Matrix2f(); // Kill Bp because it has yielded plasticity
-    }
-
-    // Write back to GPU global memory
-    mat.d_Fe[p] = Fe_new;
-    mat.d_Jp[p] = Jp_new;
+    // Write back to GPU
+    mat.d_Fe[p] = Fe;
+    mat.d_Fp[p] = Fp;
+    mat.d_Jp[p] = Fp.det();
 }
 
 
 #pragma region Kernel Functions
-__device__ Vector2f ApplyNodeCollision(
-    const Vector2f& Xi,
-    Vector2f Vi_col,
-    const BoundaryData& bounds,
-    const float dt)
+__device__ void ApplyBoundaryCollisions(
+    const Vector2f& Xi, const Vector2f& Vi_in, const BoundaryData& bounds, const float dt,
+    Vector2f& Vi_col, Vector2f& Vi_fri)
 {
+    Vi_col = Vi_in;
+    Vi_fri = Vi_in;
+
     for (int b = 0; b < bounds.count; ++b)
     {
         LineSegmentBoundary border = bounds.d_borders[b];
+        float distance = border.normal.dot(Xi - border.start);
 
-        // Vector from first corner/start point to node:
-        Vector2f rel_pos = Xi - border.start;
+        float trial_dist = border.normal.dot(Xi + dt * Vi_col - border.start);
+        float dist_c = trial_dist - fminf(distance, 0.0f);
 
-        // Current distance between node and boundary:
-        float distance = border.normal.dot(rel_pos);
-
-        // Type 1: Sticky Boundary
-        if (border.type == STICKY && distance < 0.0f)
+        // Trigger collision only if the node is touching or penetrating the boundary
+        if (distance < 0.0f || dist_c < 0.0f)
         {
-            Vi_col = Vector2f(0.0f, 0.0f);
-        }
-        // Types 2 & 3: Separating / Sliding Boundary
-        else
-        {
-            // Compute trial distance:
-            Vector2f trial_position = Xi + dt * Vi_col;
-            Vector2f trial_rel_pos = trial_position - border.start;
+            // Standard collision response (pushes out of the wall)
+            Vi_col -= (dist_c / dt) * border.normal;
 
-            float trial_distance = border.normal.dot(trial_rel_pos);
-            float dist_c = trial_distance - fminf(distance, 0.0f);
+            // Friction response based on collision velocity
+            Vector2f v_col = Vi_fri - (dist_c / dt) * border.normal;
+            float normal_vel = v_col.dot(border.normal);
 
-            // Record collision & update velocity
-            if ((border.type == SEPARATING && dist_c < 0.0f) ||
-                (border.type == SLIDING && distance < 0.0f))
-            {
-                Vi_col -= (dist_c / dt) * border.normal;
+            // We only care about friction if the node is pushing *into* the wall (normal_vel < 0)
+            // or sliding along it.
+            Vector2f tangent = v_col - normal_vel * border.normal;
+            float t_speed = tangent.length();
+
+            if (t_speed > 1e-6f) {
+                // Normalize tangent to get the exact sliding direction unit vector
+                Vector2f tangent_dir = tangent / t_speed;
+
+                // Coulomb friction limit: max friction force scales with normal force magnitude
+                float max_friction_force = border.friction * fabsf(normal_vel);
+
+                // Reduce tangential speed by the friction drop, clamped to 0 so it doesn't reverse direction
+                float new_t_speed = fmaxf(0.0f, t_speed - max_friction_force);
+
+                // Reconstruct final friction velocity
+                Vi_fri = normal_vel * border.normal + new_t_speed * tangent_dir;
+            }
+            else {
+                Vi_fri = v_col;
             }
         }
     }
-
-    return Vi_col;
 }
 
 
@@ -237,11 +222,10 @@ __global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d
     Vector2f Xi ((float)gx, (float)gy);
 
     // 3.2 Compute and update
-    Vector2f Vi_col = ApplyNodeCollision(Xi, d_Vi[i], bounds, dt);
+    Vector2f Vi_col, Vi_fri;
+    ApplyBoundaryCollisions(Xi, d_Vi[i], bounds, dt, Vi_col, Vi_fri);
     d_Vi_Col[i] = Vi_col;
-
-    // 4. TODO: Add friction
-    Vector2f vi_fri = Vi_col;
+    d_Vi_Fri[i] = Vi_fri;
 }
 
 template <typename MatData>

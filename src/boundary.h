@@ -6,52 +6,44 @@
 
 #include "constants.h"
 
-enum BoundaryType {
-	STICKY = 1,
-	SEPARATING = 2,
-	SLIDING = 3
-};
-
-// Simple POD structure for a single line segment boundary.
-// Works seamlessly inside CUDA __device__ and __global__ functions.
 struct LineSegmentBoundary {
 	Vector2f start;
     Vector2f end;
     Vector2f normal;
-	int type;
+    float friction;
 };
 
 struct BoundaryData {
-	LineSegmentBoundary* d_borders; // Pointer to device memory
-	int count;                      // Number of border segments
+	LineSegmentBoundary* d_borders;
+	int count;                      
 };
 
 class BoundaryManager
 {
 public:
 
-	std::vector<LineSegmentBoundary> h_borders; // Host side border list
-	LineSegmentBoundary* d_borders;            // Device side border array
+    std::vector<LineSegmentBoundary> h_borders;
+	LineSegmentBoundary* d_borders;            
 	int count;
 
     void InitializeDefaultBorders() {
         h_borders.clear();
 
-        float cub = INT_CELL_SPAN;
+        float cub = 1.5f;
         float gridX = static_cast<float>(X_GRID);
         float gridY = static_cast<float>(Y_GRID);
 
         // Left border
-        h_borders.push_back({ Vector2f(cub, cub), Vector2f(cub, gridY - cub), Vector2f(1.0f, 0.0f), SEPARATING });
+        h_borders.push_back({ Vector2f(cub, cub), Vector2f(cub, gridY - cub), Vector2f(1.0f, 0.0f), 5.0f });
 
         // Right border
-        h_borders.push_back({ Vector2f(gridX - cub, cub), Vector2f(gridX - cub, gridY - cub), Vector2f(-1.0f, 0.0f), SEPARATING });
+        h_borders.push_back({ Vector2f(gridX - cub, cub), Vector2f(gridX - cub, gridY - cub), Vector2f(-1.0f, 0.0f), 5.0f });
 
         // Bottom border
-        h_borders.push_back({ Vector2f(cub, cub), Vector2f(gridX - cub, cub), Vector2f(0.0f, 1.0f), SEPARATING });
+        h_borders.push_back({ Vector2f(cub, cub), Vector2f(gridX - cub, cub), Vector2f(0.0f, 1.0f), 5.0f });
 
         // Top border
-        h_borders.push_back({ Vector2f(cub, gridY - cub), Vector2f(gridX - cub, gridY - cub), Vector2f(0.0f, -1.0f), SEPARATING });
+        h_borders.push_back({ Vector2f(cub, gridY - cub), Vector2f(gridX - cub, gridY - cub), Vector2f(0.0f, -1.0f), 5.0f });
 
         count = static_cast<int>(h_borders.size());
     }

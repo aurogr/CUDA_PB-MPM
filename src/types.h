@@ -41,6 +41,13 @@ struct alignas(8) Vector2f {
         float len = length();
         return len > 1e-8f ? (*this) / len : Vector2f(0.0f, 0.0f);
     }
+
+    __host__ __device__ Vector2f clamp(float min_val, float max_val) const {
+        return Vector2f(
+            fminf(fmaxf(x, min_val), max_val),
+            fminf(fmaxf(y, min_val), max_val)
+        );
+    }
 };
 
 __host__ __device__ inline Vector2f operator*(float s, const Vector2f& v) {
@@ -120,7 +127,7 @@ struct alignas(16) Matrix2f {
         *S = R->transpose() * (*this);
     }
 
-    __device__ void svd(Matrix2f* U, Matrix2f* Sigma, Matrix2f* V) const {
+    __host__ __device__ void svd(Matrix2f* U, Vector2f* Sigma, Matrix2f* V) const {
         // 1. Compute V and eigenvalues of F^T * F
         Matrix2f FTF = transpose() * (*this);
 
@@ -133,7 +140,7 @@ struct alignas(16) Matrix2f {
         // Singular values (square roots of eigenvalues of F^T * F)
         float s0 = sqrtf(fmaxf(0.0f, 0.5f * (trace + term)));
         float s1 = sqrtf(fmaxf(0.0f, 0.5f * (trace - term)));
-        *Sigma = Matrix2f(s0, 0.0f, 0.0f, s1);
+        *Sigma = Vector2f(s0, s1);
 
         // 2. Compute angle for V
         float angle_v = 0.5f * atan2f(2.0f * FTF.m01, gap);
@@ -145,6 +152,20 @@ struct alignas(16) Matrix2f {
         Matrix2f invSigma(s0 > 1e-6f ? 1.0f / s0 : 0.0f, 0.0f,
             0.0f, s1 > 1e-6f ? 1.0f / s1 : 0.0f);
         *U = (*this) * (*V) * invSigma;
+    }
+
+    __host__ __device__ Matrix2f diag_product(const Vector2f& diag) const {
+        return Matrix2f(
+            m00 * diag.x, m01 * diag.y,
+            m10 * diag.x, m11 * diag.y
+        );
+    }
+
+    __device__ Matrix2f diag_product_inv(const Vector2f& diag) const {
+        return Matrix2f(
+            m00 / diag.x, m01 / diag.x,
+            m10 / diag.y, m11 / diag.y
+        );
     }
 };
 

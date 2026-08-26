@@ -68,16 +68,12 @@ void Initialization()
             for (float y = -radius; y <= radius; y += spacing) {
                 if (x * x + y * y <= radius * radius) {
                     init_pos.push_back(Vector2f(center.x + x, center.y + y));
-                    init_vel.push_back(Vector2f(0.0f, 0.0f)); // Zero initial velocity
+                    init_vel.push_back(Vector2f(10.0f, 0.0f));
                 }
             }
         }
 
         int particle_count = static_cast<int>(init_pos.size());
-
-        // Mass and volume computation
-        float computed_vp0 = (spacing * spacing);
-        float computed_mp = 1.0f * computed_vp0; // assumes density = 1.0
 
         // Pass the corrected values into your particle system initialization
         ps.initialize(particle_count, init_pos, init_vel);
@@ -89,23 +85,15 @@ void AddParticles() {
     std::vector<Vector2f> new_pos;
     std::vector<Vector2f> new_vel;
 
-    Vector2f v(30.0f, 15.0f);
+    Vector2f v(30.0f, 0.0f);
 
-    int particles_per_axis = PARTICLES_PER_CELL_AXIS; // 2
+    for (int p = 0; p < 8; ++p) {
+        float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+        float pos_x = static_cast<float>(INT_CELL_SPAN);
+        float pos_y = static_cast<float>(Y_GRID) - 2.0f * static_cast<float>(INT_CELL_SPAN) - 0.5f * static_cast<float>(p) - r;
 
-    // Let's spawn a 2x2 grid of particles (total 4 particles = exactly 1 full cell block)
-    for (int y = 0; y < particles_per_axis; ++y) {
-        for (int x = 0; x < particles_per_axis; ++x) {
-
-            float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 0.01f;
-
-            // Offset each particle by exactly CELL_SPACING so they occupy distinct sub-positions in the cell
-            float pos_x = static_cast<float>(INT_CELL_SPAN) * 3 + (static_cast<float>(x) * CELL_SPACING) + r;
-            float pos_y = static_cast<float>(Y_GRID) - 3.0f * static_cast<float>(INT_CELL_SPAN) - (static_cast<float>(y) * CELL_SPACING) - r;
-
-            new_pos.push_back(Vector2f(pos_x, pos_y));
-            new_vel.push_back(v);
-        }
+        new_pos.push_back(make_float2(pos_x, pos_y));
+        new_vel.push_back(v);
     }
 
     ps.addParticlesMidSimulation(new_pos, new_vel);
@@ -167,7 +155,7 @@ void RenderParticles()
 
     glColor3f(0.2f, 0.6f, 1.0f);
     glEnable(GL_POINT_SMOOTH);
-    glPointSize(4.0);
+    glPointSize(3.0);
 
     glDrawArrays(GL_POINTS, 0, ps.num_particles);
 
@@ -175,29 +163,28 @@ void RenderParticles()
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
-void RenderGridNodes() {
-    std::vector<float> h_Mi(grid.num_nodes);
-    cudaMemcpy(h_Mi.data(), grid.d_Mi, (grid.num_nodes) * sizeof(float), cudaMemcpyDeviceToHost);
+void RenderGridBackground()
+{
+    // Save current OpenGL states if needed, or set up color for grid lines (e.g., subtle gray)
+    glColor3f(0.2f, 0.2f, 0.2f); // Dark gray color for grid lines
+    glLineWidth(1.0f);
 
-    glEnable(GL_POINT_SMOOTH);
-    glPointSize(3.0f);
+    glBegin(GL_LINES);
 
-    glBegin(GL_POINTS);
-    int stride = grid.grid_x + 1;
+    // Draw vertical grid lines
+    for (int x = 0; x <= X_GRID; ++x)
+    {
+        float xPos = static_cast<float>(x) * H;
+        glVertex2f(xPos, 0.0f);
+        glVertex2f(xPos, static_cast<float>(Y_GRID) * H);
+    }
 
-    for (int i = 0; i < grid.num_nodes; ++i) {
-        // Derive position on the fly on CPU
-        float gx = static_cast<float>(i % stride);
-        float gy = static_cast<float>(i / stride);
-
-        if (h_Mi[i] > 0.0f) {
-            glColor3f(0.5f, 0.5f, 0.5f); // Active node (has mass)
-        }
-        else {
-            glColor3f(0.3f, 0.3f, 0.3f); // Inactive node
-        }
-
-        glVertex2f(gx, gy);
+    // Draw horizontal grid lines
+    for (int y = 0; y <= Y_GRID; ++y)
+    {
+        float yPos = static_cast<float>(y) * H;
+        glVertex2f(0.0f, yPos);
+        glVertex2f(static_cast<float>(X_GRID) * H, yPos);
     }
 
     glEnd();
@@ -272,7 +259,7 @@ int main()
                 stepOnce = false;
             }
 
-            //RenderGridNodes();
+            RenderGridBackground();
             RenderParticles();
 
             glfwSwapBuffers(window);
