@@ -42,13 +42,13 @@ __device__ Matrix2f ComputeAp(const SnowData& mat, int p, float Vp0) {
     return Ap;
 }
 
-__device__ void UpdateDeformation(const WaterData& mat, int p, float dt, Matrix2f T) {
+__device__ void UpdateDeformation(const WaterData& mat, int p, float dt, Matrix2f T, Matrix2f* d_Bp) {
     float next_Jp = mat.d_Jp[p] * (1.0f + dt * (T.m00 + T.m11));
 
-    mat.d_Jp[p] = fminf(fmaxf(next_Jp, 0.6f), 1.5f); // prevent volume explosions
+    mat.d_Jp[p] = fmaxf(next_Jp, 0.2f); // prevent volume explosions
 }
 
-__device__ void UpdateDeformation(const SnowData& mat, int p, float dt, Matrix2f T) {
+__device__ void UpdateDeformation(const SnowData& mat, int p, float dt, Matrix2f T, Matrix2f* d_Bp) {
     // 1. Advance elastic deformation gradient
     Matrix2f Fe_trial = (identity() + dt * T) * mat.d_Fe[p];
 
@@ -81,6 +81,12 @@ __device__ void UpdateDeformation(const SnowData& mat, int p, float dt, Matrix2f
     float Jp_new = mat.d_Jp[p];
     if (det_clamped > 1e-6f) {
         Jp_new *= (det_trial / det_clamped);
+    }
+
+    if (s0_trial < min_stretch || s0_trial > max_stretch ||
+        s1_trial < min_stretch || s1_trial > max_stretch)
+    {
+        *d_Bp = Matrix2f(); // Kill Bp because it has yielded plasticity
     }
 
     // Write back to GPU global memory
@@ -202,7 +208,7 @@ __global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d
 
     float Mi = d_Mi[i];
 
-    if (Mi < 1e-7f) {
+    if (Mi < 1e-10f) {
         d_Vi[i] = make_float2(0.0f, 0.0f);
         d_Vi_Col[i] = make_float2(0.0f, 0.0f);
         d_Vi_Fri[i] = make_float2(0.0f, 0.0f);
@@ -234,8 +240,8 @@ __global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d
     Vector2f Vi_col = ApplyNodeCollision(Xi, d_Vi[i], bounds, dt);
     d_Vi_Col[i] = Vi_col;
 
-    // 4. TODO: Apply friction
-    d_Vi_Fri[i] = Vi_col;
+    // 4. TODO: Add friction
+    Vector2f vi_fri = Vi_col;
 }
 
 template <typename MatData>
@@ -273,7 +279,7 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, Matrix2f* d_Bp, MatDa
             float Wip = w[x].x * w[y].y;
 
             // TODO: see if this step is necessary or i could skip it
-            if (Wip < 1e-7f) continue; // skip negligible contributions
+            if (Wip < 1e-10f) continue; // skip negligible contributions
 
             // 3.3 Accumulate particle velocity: Vp += Wip * Vi
             new_Vp_fri += Wip * d_Vi_fri[node_idx];
@@ -310,7 +316,7 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, Matrix2f* d_Bp, MatDa
     d_Xp[p] = Xp;
 
     // 7. Update deformation
-    UpdateDeformation(d_mat, p, dt, T);
+    UpdateDeformation(d_mat, p, dt, T, &d_Bp[p]);
 }
 
 #pragma endregion

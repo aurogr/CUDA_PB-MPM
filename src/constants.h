@@ -4,6 +4,14 @@
 const static int X_GRID = 200; // Size of the domain
 const static int Y_GRID = 100;
 
+const static int PARTICLES_PER_CELL_AXIS = 2;
+
+const static float CELL_SPACING = 1.0 / PARTICLES_PER_CELL_AXIS;
+
+const static float COMPUTED_VP0 = CELL_SPACING * CELL_SPACING;
+
+const static float COMPUTED_MP0 = 1.0 * COMPUTED_VP0; // density set to 1.0
+
 // for simplicity we are gonna stablish that the cell size is 1.0 so that we can omit it from the code
 //const static double H = 1.0; 
 //const static double H_INV = 1.0;

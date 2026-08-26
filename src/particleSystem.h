@@ -46,12 +46,12 @@ struct SnowData {
     float* d_Jp;    // Plastic volume determinant
 
     // CONSTANTS
-    const double THT_C = 2.0e-2;				// Critical compression
-    const double THT_S = 6.0e-3;				// Critical stretch
-    const double KSI = 10;						// Hardening coefficient
-    const double RHO = 4.0e2;					// Density
-    const double E = 1.4e5;						// Young's modulus
-    const double V = 0.2;						// Poisson's ratio
+    const float THT_C = 2.0e-2;				// Critical compression
+    const float THT_S = 6.0e-3;				// Critical stretch
+    const float KSI = 10.0;						// Hardening coefficient
+    const float RHO = 4.0e2;					// Density
+    const float E = 1.4e5;						// Young's modulus
+    const float V = 0.2;						// Poisson's ratio
 
     const float MU_0 = E / (1.0 + V) / 2.0;      // Base shear modulus
     const float LAMBDA_0 = E * V / (1.0 + V) / (1.0 - 2.0 * V);  // Base Lame's first parameter
@@ -99,7 +99,7 @@ public:
     // Material specific data is templated inside different structs
     MatData d_Mat;
 
-    void initialize(int count, const std::vector<Vector2f>& h_Xp, const std::vector<Vector2f>& h_Vp, float vp0 = 1.14f, float mp = 0.0005f) {
+    void initialize(int count, const std::vector<Vector2f>& h_Xp, const std::vector<Vector2f>& h_Vp) {
         num_particles = count;
 
         cudaMalloc(&d_Vp0, MAX_PARTICLES * sizeof(float));
@@ -110,8 +110,8 @@ public:
 
         if (num_particles > 0) {
 
-            std::vector<float> h_Mp(num_particles, mp);
-            std::vector<float> h_Vp0(num_particles, vp0);
+            std::vector<float> h_Mp(num_particles, COMPUTED_MP0);
+            std::vector<float> h_Vp0(num_particles, COMPUTED_VP0);
 
             cudaMemcpy(d_Xp, h_Xp.data(), num_particles * sizeof(Vector2f), cudaMemcpyHostToDevice);
             cudaMemcpy(d_Vp, h_Vp.data(), num_particles * sizeof(Vector2f), cudaMemcpyHostToDevice);
@@ -123,7 +123,7 @@ public:
         d_Mat.allocate(num_particles);
     }
 
-    void addParticlesMidSimulation(const std::vector<Vector2f>& new_pos, const std::vector<Vector2f>& new_vel, float vp0 = 1.14f, float mp = 0.0005f) {
+    void addParticlesMidSimulation(const std::vector<Vector2f>& new_pos, const std::vector<Vector2f>& new_vel) {
         int add_count = static_cast<int>(new_pos.size());
         if (add_count == 0) return;
 
@@ -136,8 +136,8 @@ public:
         int offset = num_particles;
 
         // Create new batch of vectors
-        std::vector<float> h_Vp0(add_count, vp0);
-        std::vector<float> h_Mp(add_count, mp);
+        std::vector<float> h_Vp0(add_count, COMPUTED_VP0);
+        std::vector<float> h_Mp(add_count, COMPUTED_MP0);
         std::vector<Matrix2f> h_Bp(add_count, Matrix2f(0, 0, 0, 0));
 
         // Upload the new batch to memory, at the end of the last used position, on the reserved space
