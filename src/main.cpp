@@ -14,16 +14,10 @@
 #include "boundary.h"
 #include "types.h"
 
-#ifdef _WIN32
-extern "C" {
-    __declspec(dllexport) unsigned long NvOptimusEnablement = 0x00000001;
-}
-#endif
-
 /* Globals */
 Grid grid;
-ParticleSystem ps;
-BoundaryData bounds;
+ParticleSystem<SnowData> ps;
+LevelSetCollisionManager collisionManager;
 
 int stepCount = 0;
 
@@ -49,20 +43,74 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 }
 
 #pragma region Material Point Method Algorithm
+
 void Initialization()
 {
     grid.initialize(X_GRID, Y_GRID);
 
-    BoundaryManager boundaryManager;
-    boundaryManager.InitializeDefaultBorders();
-    boundaryManager.CopyToDevice();
-    bounds = boundaryManager.GetDeviceData();
+    // Add collision objects
+    float wallThickness = 2.0f; // Thickness of the solid wall
+    float wall_friction = 0.2f;
 
-    // Spawn fluid block (e.g., 40x40 block of particles)
+    // Left border
+    collisionManager.addBox(
+        Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f),
+        Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f),
+        0.0f, wall_friction
+    );
+
+    // Right Border 
+    collisionManager.addBox(
+        Vector2f(X_GRID - wallThickness * 0.5f, Y_GRID * 0.5f),
+        Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f),
+        0.0f, wall_friction
+    );
+
+    // Bottom Border
+    collisionManager.addBox(
+        Vector2f(X_GRID * 0.5f, wallThickness * 0.5f),
+        Vector2f(X_GRID * 0.5f, wallThickness * 0.5f),
+        0.0f, wall_friction
+    );
+
+    // Top Border
+    collisionManager.addBox(
+        Vector2f(X_GRID * 0.5f, Y_GRID - wallThickness * 0.5f),
+        Vector2f(X_GRID * 0.5f, wallThickness * 0.5f),
+        0.0f, wall_friction
+    );
+
+    // Collider sphere
+    collisionManager.addSphere(Vector2f(75.0f, 20.0f), 10.0f, .3f);
+
+    collisionManager.copyToDevice();
+
+    // Spawn an initial shape of fluid
     std::vector<Vector2f> init_pos;
     std::vector<Vector2f> init_vel;
 
-    ps.initialize(static_cast<int>(init_pos.size()), init_pos, init_vel);
+    if (INIT_SPHERE) {
+        Vector2f center(static_cast<float>(X_GRID) * 0.5f, static_cast<float>(Y_GRID) * 0.5f);
+
+        float radius = 20.0f; // Size of sphere
+        float spacing = CELL_SPACING; // Distance between particles
+
+        // Generate particles in a circle
+        for (float x = -radius; x <= radius; x += spacing) {
+            for (float y = -radius; y <= radius; y += spacing) {
+                if (x * x + y * y <= radius * radius) {
+                    init_pos.push_back(Vector2f(center.x + x, center.y + y));
+                    init_vel.push_back(Vector2f(10.0f, 0.0f));
+                }
+            }
+        }
+
+        int particle_count = static_cast<int>(init_pos.size());
+
+        // Pass the corrected values into your particle system initialization
+        ps.initialize(particle_count, init_pos, init_vel);
+    } else
+        ps.initialize(static_cast<int>(init_pos.size()), init_pos, init_vel);
 }
 
 void AddParticles() {
@@ -73,7 +121,6 @@ void AddParticles() {
 
     for (int p = 0; p < 8; ++p) {
         float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
-
         float pos_x = static_cast<float>(INT_CELL_SPAN);
         float pos_y = static_cast<float>(Y_GRID) - 2.0f * static_cast<float>(INT_CELL_SPAN) - 0.5f * static_cast<float>(p) - r;
 
@@ -81,20 +128,20 @@ void AddParticles() {
         new_vel.push_back(v);
     }
 
-    ps.addParticlesMidSimulation(new_pos, new_vel, 1.14f, 0.0005f);
+    ps.addParticlesMidSimulation(new_pos, new_vel);
 }
 
 void Update()
 {
-    if (ps.num_particles < MAX_PARTICLES && stepCount % EMISSION_INTERVAL == 0) {
+    if (ps.num_particles < MAX_PARTICLES && stepCount % EMISSION_INTERVAL == 0 && ADD_MID_SIM) {
         AddParticles();
     }
-
+     
     stepCount++;
 
     grid.clear();
     p2g(ps, grid, PHYSICS_DT);
-    updateGrid(grid, PHYSICS_DT, bounds);
+    updateGrid(grid, PHYSICS_DT, collisionManager.getDeviceData());
     g2p(ps, grid, PHYSICS_DT);
 }
 #pragma endregion
@@ -140,7 +187,7 @@ void RenderParticles()
 
     glColor3f(0.2f, 0.6f, 1.0f);
     glEnable(GL_POINT_SMOOTH);
-    glPointSize(12);
+    glPointSize(3.0);
 
     glDrawArrays(GL_POINTS, 0, ps.num_particles);
 
@@ -148,32 +195,94 @@ void RenderParticles()
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
-void RenderGridNodes() {
-    std::vector<float> h_Mi(grid.num_nodes);
-    cudaMemcpy(h_Mi.data(), grid.d_Mi, (grid.num_nodes) * sizeof(float), cudaMemcpyDeviceToHost);
+void RenderGridBackground()
+{
+    // Save current OpenGL states if needed, or set up color for grid lines (e.g., subtle gray)
+    glColor3f(0.2f, 0.2f, 0.2f); // Dark gray color for grid lines
+    glLineWidth(1.0f);
 
-    glEnable(GL_POINT_SMOOTH);
-    glPointSize(3.0f);
+    glBegin(GL_LINES);
 
-    glBegin(GL_POINTS);
-    int stride = grid.grid_x + 1;
+    // Draw vertical grid lines
+    for (int x = 0; x <= X_GRID; ++x)
+    {
+        float xPos = static_cast<float>(x) * H;
+        glVertex2f(xPos, 0.0f);
+        glVertex2f(xPos, static_cast<float>(Y_GRID) * H);
+    }
 
-    for (int i = 0; i < grid.num_nodes; ++i) {
-        // Derive position on the fly on CPU
-        float gx = static_cast<float>(i % stride);
-        float gy = static_cast<float>(i / stride);
-
-        if (h_Mi[i] > 0.0f) {
-            glColor3f(0.5f, 0.5f, 0.5f); // Active node (has mass)
-        }
-        else {
-            glColor3f(0.3f, 0.3f, 0.3f); // Inactive node
-        }
-
-        glVertex2f(gx, gy);
+    // Draw horizontal grid lines
+    for (int y = 0; y <= Y_GRID; ++y)
+    {
+        float yPos = static_cast<float>(y) * H;
+        glVertex2f(0.0f, yPos);
+        glVertex2f(static_cast<float>(X_GRID) * H, yPos);
     }
 
     glEnd();
+}
+
+void RenderColliders() {
+    glColor3f(.5f, .0f, .0f);
+
+    for (const auto& obj : collisionManager.h_objects) {
+        for (const auto& obj : collisionManager.h_objects) {
+            if (obj.type == 1) {
+                float cx = obj.center.x;
+                float cy = obj.center.y;
+                float hx = obj.size.x; // Half-width
+                float hy = obj.size.y; // Half-height
+
+                if (obj.rotation == 0.0f) {
+                    glBegin(GL_QUADS);
+                    glVertex2f(cx - hx, cy - hy); // Bottom-left
+                    glVertex2f(cx + hx, cy - hy); // Bottom-right
+                    glVertex2f(cx + hx, cy + hy); // Top-right
+                    glVertex2f(cx - hx, cy + hy); // Top-left
+                    glEnd();
+                }
+                else {
+                    float c = cosf(obj.rotation);
+                    float s = sinf(obj.rotation);
+
+                    auto rotatePoint = [cx, cy, c, s](float localX, float localY) {
+                        float rx = c * localX - s * localY;
+                        float ry = s * localX + c * localY;
+                        return Vector2f(cx + rx, cy + ry);
+                        };
+
+                    Vector2f bl = rotatePoint(-hx, -hy);
+                    Vector2f br = rotatePoint(hx, -hy);
+                    Vector2f tr = rotatePoint(hx, hy);
+                    Vector2f tl = rotatePoint(-hx, hy);
+
+                    glBegin(GL_QUADS);
+                    glVertex2f(bl.x, bl.y);
+                    glVertex2f(br.x, br.y);
+                    glVertex2f(tr.x, tr.y);
+                    glVertex2f(tl.x, tl.y);
+                    glEnd();
+                }
+            }
+            else if (obj.type == 0) {
+                float cx = obj.center.x;
+                float cy = obj.center.y;
+                float radius = obj.size.x; // Assuming radius is stored in size.x
+                int segments = 20;         // Smoothness of the circle
+
+                glBegin(GL_TRIANGLE_FAN);
+                glVertex2f(cx, cy); // Center of the circle for the fan
+
+                for (int i = 0; i <= segments; ++i) {
+                    float theta = 2.0f * 3.1415926f * static_cast<float>(i) / static_cast<float>(segments);
+                    float x = cx + radius * cosf(theta);
+                    float y = cy + radius * sinf(theta);
+                    glVertex2f(x, y);
+                }
+                glEnd();
+            }
+        }
+    }
 }
 
 GLFWwindow* initGLFWContext()
@@ -245,7 +354,8 @@ int main()
                 stepOnce = false;
             }
 
-            //RenderGridNodes();
+            RenderGridBackground();
+            RenderColliders();
             RenderParticles();
 
             glfwSwapBuffers(window);

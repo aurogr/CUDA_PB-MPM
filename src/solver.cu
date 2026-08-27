@@ -5,52 +5,152 @@
 #include "boundary.h"
 #include "types.h"
 
+__device__ float ComputeAp(const WaterData& mat, int p, float Vp0) {
+
+    float Jp = mat.d_Jp[p];
+
+    float pressure = -mat.K * (1.0f / pow(Jp, mat.GAMMA) - 1.0f);	// Tait's pressure formula
+
+    float currentVolume = Vp0 * Jp;
+
+    float Ap = pressure * currentVolume;
+
+    return Ap;
+}
+
+__device__ Matrix2f ComputeAp(const SnowData& mat, int p, float Vp0) {
+    float Jp = mat.d_Jp[p];
+    Matrix2f Fe = mat.d_Fe[p];
+    Matrix2f Fp;
+
+    // Compute Lame parameters
+    float plastic_hardening_factor = std::exp(mat.KSI * (1.0f - Jp));
+    float mu = mat.MU_0 * plastic_hardening_factor;
+    float lambda = mat.LAMBDA_0 * plastic_hardening_factor;
+
+    // Polar decomposition to extract rotation (Fe = Re * Se)
+    Matrix2f Re, Se;
+    Fe.polar_decomp(&Re, &Se);
+
+    // Compute kirchhoff stress tensor
+    float Je = Fe.det();
+    auto stress_tensor = 2.0f * mu * (Fe - Re) * Fe.transpose() + lambda * Je * (Je - 1.0f) * identity();
+
+    // Compute Ap
+    Matrix2f Ap = Vp0 * stress_tensor;
+
+    return Ap;
+}
+
+__device__ void UpdateDeformation(const WaterData& mat, int p, float dt, Matrix2f T, Matrix2f* d_Bp) {
+    mat.d_Jp[p] *= (1.0f + dt * (T.m00 + T.m11));
+}
+
+__device__ void UpdateDeformation(const SnowData& mat, int p, float dt, Matrix2f T, Matrix2f* d_Bp) {
+    Matrix2f FeTr = (identity() + dt * T) * mat.d_Fe[p];
+    Matrix2f FpTr = mat.d_Fp[p];
+
+    Matrix2f U, V;
+    Vector2f Eps;
+    FeTr.svd(&U, &Eps, &V);
+
+    Vector2f proj = Eps.clamp(1.0f - mat.THT_C, 1.0f + mat.THT_S);
+
+    Matrix2f Fe = U.diag_product(proj) * V.transpose();
+
+    Vector2f plastic_factor(
+        proj.x / (Eps.x + 1e-12f),
+        proj.y / (Eps.y + 1e-12f)
+    );
+    Matrix2f DiagInvRatio(plastic_factor.x, 0.0f, 0.0f, plastic_factor.y);
+    
+    Matrix2f Fp = V * DiagInvRatio * V.transpose() * FpTr;
+
+    // Write back to GPU
+    mat.d_Fe[p] = Fe;
+    mat.d_Fp[p] = Fp;
+    mat.d_Jp[p] = Fp.det();
+}
+
+
 #pragma region Kernel Functions
-__device__ Vector2f ApplyNodeCollision(
-    const Vector2f& Xi,
-    Vector2f Vi_col,
-    const BoundaryData& bounds,
-    const float dt)
-{
-    for (int b = 0; b < bounds.count; ++b)
-    {
-        LineSegmentBoundary border = bounds.d_borders[b];
 
-        // Vector from first corner/start point to node:
-        Vector2f rel_pos = Xi - border.start;
+__device__ __inline__ void checkCollisions(const Vector2f Xi, Vector2f& Vi, CollisionManagerData colliders) {
+    for (int i = 0; i < colliders.count; i++) {
+        CollisionObjectData obj = colliders.d_objects[i];
+        float phi = 0.0f; // signed based distance function value
+        Vector2f n(0.0f, 0.0f);
 
-        // Current distance between node and boundary:
-        float distance = border.normal.dot(rel_pos);
-
-        // Type 1: Sticky Boundary
-        if (border.type == STICKY && distance < 0.0f)
-        {
-            Vi_col = Vector2f(0.0f, 0.0f);
+        if (obj.type == 0) { // sphere
+            Vector2f r = Xi - obj.center;
+            float dist = r.length();
+            phi = dist - obj.size.x;
+            n = (dist > 1e-5f) ? (r / dist) : Vector2f(0.0f, 1.0f);
         }
-        // Types 2 & 3: Separating / Sliding Boundary
-        else
-        {
-            // Compute trial distance:
-            Vector2f trial_position = Xi + dt * Vi_col;
-            Vector2f trial_rel_pos = trial_position - border.start;
+        else if (obj.type == 1) { // box
+            Vector2f d_pos = Xi - obj.center;
 
-            float trial_distance = border.normal.dot(trial_rel_pos);
-            float dist_c = trial_distance - fminf(distance, 0.0f);
+            if (obj.rotation != 0.0f) {
+                float c = cosf(-obj.rotation);
+                float s = sinf(-obj.rotation);
+                float x_rot = c * d_pos.x - s * d_pos.y;
+                float y_rot = s * d_pos.x + c * d_pos.y;
+                d_pos = Vector2f(x_rot, y_rot);
+            }
 
-            // Record collision & update velocity
-            if ((border.type == SEPARATING && dist_c < 0.0f) ||
-                (border.type == SLIDING && distance < 0.0f))
-            {
-                Vi_col -= (dist_c / dt) * border.normal;
+            Vector2f abs_pos(fabsf(d_pos.x), fabsf(d_pos.y));
+            Vector2f q = abs_pos - obj.size;
+
+            float outside_dist = Vector2f(fmaxf(q.x, 0.0f), fmaxf(q.y, 0.0f)).length();
+            float inside_dist = fminf(fmaxf(q.x, q.y), 0.0f);
+            phi = outside_dist + inside_dist;
+
+            float sign_x = (d_pos.x < 0.0f) ? -1.0f : 1.0f;
+            float sign_y = (d_pos.y < 0.0f) ? -1.0f : 1.0f;
+
+            if (outside_dist > 0.0f) {
+                n = Vector2f((q.x > 0.0f) ? sign_x * (q.x / outside_dist) : 0.0f,
+                    (q.y > 0.0f) ? sign_y * (q.y / outside_dist) : 0.0f);
+            }
+            else {
+                if (q.x > q.y) n = Vector2f(sign_x, 0.0f);
+                else n = Vector2f(0.0f, sign_y);
+            }
+
+            if (obj.rotation != 0.0f) {
+                float c = cosf(obj.rotation);
+                float s = sinf(obj.rotation);
+                float nx = c * n.x - s * n.y;
+                float ny = s * n.x + c * n.y;
+                n = Vector2f(nx, ny);
+            }
+        }
+
+        if (phi < 1.0f) { // 1.0f because it is grid_spacing
+            Vector2f v_co(0.0f, 0.0f);
+            Vector2f v_rel = Vi - v_co;
+            float vn = v_rel.dot(n);
+
+            if (vn < 0.0f) {
+                Vector2f vt = v_rel - n * vn;
+                float vt_len = vt.length();
+
+                Vector2f v_rel_prime;
+                if (vt_len <= -obj.friction * vn) {
+                    v_rel_prime = Vector2f(0.0f, 0.0f);
+                }
+                else {
+                    v_rel_prime = vt + obj.friction * vn * (vt / vt_len);
+                }
+                Vi = v_rel_prime + v_co;
             }
         }
     }
-
-    return Vi_col;
 }
 
-__global__ void p2g_kernel(const float* d_Vp0, const Vector2f* d_Xp, const Vector2f* d_Vp, const float* d_Mp, const Matrix2f* d_Bp,
-    float* d_Jp, float* d_Ap, // TODO: these are inherent to the constitutive model and should not be here in a future
+
+template <typename MatData>
+__global__ void p2g_kernel(const float* d_Vp0, const Vector2f* d_Xp, const Vector2f* d_Vp, const float* d_Mp, const Matrix2f* d_Bp, MatData d_mat,
     float* d_Mi, Vector2f* d_Vi, Vector2f* d_Fi, const float dt, const int num_particles, const int gridX, const int gridY)
 {
     // 1. Get particle (thread per particle) and its characteristics
@@ -62,18 +162,8 @@ __global__ void p2g_kernel(const float* d_Vp0, const Vector2f* d_Xp, const Vecto
     Vector2f Vp = d_Vp[p];
     Matrix2f Bp = d_Bp[p];
     float Mp = d_Mp[p];
-    float Ap = d_Ap[p];
-    float Jp = d_Jp[p];
 
-    // 1.2. Calculate stress derivative from particle constitutive model
-    // (IDEA: Here each particle could have an index that points to an enum of constitutive types? or a pointer to a type?)
-    // For now we only have water
-    const float RHO_water = 1.0;					// Density
-    const float K_water = 50.0;					// Bulk Modulus
-    const int   GAMMA_water = 3;					// Penalize deviation form incompressibility
-
-    float dJp = -K_water * (1.0 / pow(Jp, GAMMA_water) - 1.0);	// Deformation gradient increment
-    Ap = dJp * Vp0 * Jp;
+    auto Ap = ComputeAp(d_mat, p, Vp0);
 
     // 2. Find the bottom-left node closest to the particle of the 3x3 stencil (and init weights)
     Vector2f w[3], dw[3];
@@ -120,17 +210,15 @@ __global__ void p2g_kernel(const float* d_Vp0, const Vector2f* d_Xp, const Vecto
     }
 }
 
-__global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d_Vi_Col, Vector2f* d_Vi_Fri, Vector2f* d_Fi,
-    const float dt, const float G, const int num_nodes, const int gridX, const int gridY, BoundaryData bounds) {
+__global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d_Fi,
+    const float dt, const float G, const int num_nodes, const int gridX, const int gridY, CollisionManagerData collisionData) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= num_nodes) return;
 
     float Mi = d_Mi[i];
 
-    if (Mi < 1e-7f) {
+    if (Mi < 1e-10f) {
         d_Vi[i] = make_float2(0.0f, 0.0f);
-        d_Vi_Col[i] = make_float2(0.0f, 0.0f);
-        d_Vi_Fri[i] = make_float2(0.0f, 0.0f);
         return;
     }
 
@@ -156,15 +244,12 @@ __global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Vi, Vector2f* d
     Vector2f Xi ((float)gx, (float)gy);
 
     // 3.2 Compute and update
-    Vector2f Vi_col = ApplyNodeCollision(Xi, d_Vi[i], bounds, dt);
-    d_Vi_Col[i] = Vi_col;
-
-    // 4. TODO: Apply friction
-    d_Vi_Fri[i] = Vi_col;
+    checkCollisions(Xi, d_Vi[i], collisionData);
 }
 
-__global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, float* d_Jp, Matrix2f* d_Bp,
-    Vector2f* d_Vi_col, Vector2f* d_Vi_fri, const int num_particles, const int gridX, const int gridY, const float dt)
+template <typename MatData>
+__global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, Matrix2f* d_Bp, MatData d_mat,
+    Vector2f* d_Vi, const int num_particles, const int gridX, const int gridY, const float dt)
 {
     // 1. Get particle (thread per particle) and its characteristics
     int p = blockIdx.x * blockDim.x + threadIdx.x;
@@ -172,8 +257,7 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, float* d_Jp, Matrix2f
 
     Vector2f Xp = d_Xp[p];
     Vector2f new_Xp (0.0f, 0.0f);
-    Vector2f new_Vp_fri (0.0f, 0.0f);
-    Vector2f new_Vp_col (0.0f, 0.0f);
+    Vector2f new_Vp (0.0f, 0.0f);
     Matrix2f new_Bp (0.0f, 0.0f, 0.0f, 0.0f);
 
     Matrix2f T (0.0f, 0.0f, 0.0f, 0.0f); // nodal deformation
@@ -197,13 +281,13 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, float* d_Jp, Matrix2f
             float Wip = w[x].x * w[y].y;
 
             // TODO: see if this step is necessary or i could skip it
-            if (Wip < 1e-7f) continue; // skip negligible contributions
+            if (Wip < 1e-10f) continue; // skip negligible contributions
 
             // 3.3 Accumulate particle velocity: Vp += Wip * Vi
-            new_Vp_fri += Wip * d_Vi_fri[node_idx];
+            new_Vp += Wip * d_Vi[node_idx];
 
             // 3.4 Accumulate B_p matrix: B_p += W_ip * (V_i outer_product dist)
-            new_Bp += Wip * outer_product(d_Vi_fri[node_idx], node - Xp);
+            new_Bp += Wip * outer_product(d_Vi[node_idx], node - Xp);
 
             // 3.5 Calculate 2D gradient components of the weight function
             Vector2f gradW(
@@ -212,72 +296,71 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Vp, float* d_Jp, Matrix2f
             );
 
             // 3.6 Accumulate velocity gradient matrix T = Vi ⊗ ∇Wip
-            T += Matrix2f::outer_product(d_Vi_col[node_idx], gradW);
-
-            // 3.7 Accumulate velocity for each particle based on the weight of the current node
-            new_Vp_col += Wip * d_Vi_col[node_idx];
+            T += Matrix2f::outer_product(d_Vi[node_idx], gradW);
         }
     }
 
     // 4. Write back the value calculated for the particle based on the nodes that influence it
-    d_Vp[p] = new_Vp_fri;
+    d_Vp[p] = new_Vp;
     d_Bp[p] = new_Bp;
 
     // 5. Position advection using collision velocity
-    Xp += dt * new_Vp_col;
-
-    // 6. Clamp particle position inside the active domain boundary
-    const float padding = 2.0f;
-    Xp.x = fminf(fmaxf(Xp.x, padding), (float)gridX - padding);
-    Xp.y = fminf(fmaxf(Xp.y, padding), (float)gridY - padding);
+    Xp += dt * new_Vp;
 
     d_Xp[p] = Xp;
 
-    // 7. Nodal deformation
-    float next_Jp = d_Jp[p] * (1.0f + dt * (T.x + T.w));
-
-    // 8. Prevent Volume Explosions
-    d_Jp[p] = fminf(fmaxf(next_Jp, 0.6f), 1.5f);
+    // 7. Update deformation
+    UpdateDeformation(d_mat, p, dt, T, &d_Bp[p]);
 }
 
 #pragma endregion
 
 #pragma region Host Solver Implementation
 
-void p2g(const ParticleSystem& ps, Grid& grid, float dt)
+template <typename MatData>
+void p2g(const ParticleSystem<MatData>& ps, Grid& grid, float dt)
 {
     if (ps.num_particles == 0) return;
     int blockSize = 256;
     int gridSize = (ps.num_particles + blockSize - 1) / blockSize;
 
     p2g_kernel << <gridSize, blockSize >> > (
-        ps.d_Vp0, ps.d_Xp, ps.d_Vp, ps.d_Mp, ps.d_Bp,
-        ps.Jp, ps.Ap, grid.d_Mi, grid.d_Vi, grid.d_Fi,
-        dt, ps.num_particles, grid.grid_x, grid.grid_y
+        ps.d_Vp0, ps.d_Xp, ps.d_Vp, ps.d_Mp, ps.d_Bp, ps.d_Mat,
+        grid.d_Mi, grid.d_Vi, grid.d_Fi, dt, ps.num_particles, grid.grid_x, grid.grid_y
         );
 }
 
-void updateGrid(Grid& grid, float dt, BoundaryData bounds)
+void updateGrid(Grid& grid, float dt, CollisionManagerData collisionData)
 {
     int blockSize = 256;
     int gridSize = (grid.num_nodes + blockSize - 1) / blockSize;
 
-    updateGrid_kernel << <gridSize, blockSize >> > (
-        grid.d_Mi, grid.d_Vi, grid.d_Vi_col, grid.d_Vi_fri, grid.d_Fi,
-        dt, -9.81f, grid.num_nodes, grid.grid_x, grid.grid_y, bounds
+    updateGrid_kernel <<<gridSize, blockSize >>> (
+        grid.d_Mi, grid.d_Vi, grid.d_Fi,
+        dt, -9.81f, grid.num_nodes, grid.grid_x, grid.grid_y, collisionData
         );
 }
 
-void g2p(ParticleSystem& ps, const Grid& grid, float dt)
+template <typename MatData>
+void g2p(ParticleSystem<MatData>& ps, const Grid& grid, float dt)
 {
     if (ps.num_particles == 0) return;
     int blockSize = 256;
     int gridSize = (ps.num_particles + blockSize - 1) / blockSize;
 
     g2p_kernel << <gridSize, blockSize >> > (
-        ps.d_Xp, ps.d_Vp, ps.Jp, ps.d_Bp,
-        grid.d_Vi_col, grid.d_Vi_fri, ps.num_particles, grid.grid_x, grid.grid_y, dt
+        ps.d_Xp, ps.d_Vp, ps.d_Bp, ps.d_Mat,
+        grid.d_Vi, ps.num_particles, grid.grid_x, grid.grid_y, dt
         );
 }
+
+#pragma endregion
+
+#pragma region Explicit instantiation
+template void p2g<WaterData>(const ParticleSystem<WaterData>& ps, Grid& grid, float dt);
+template void p2g<SnowData>(const ParticleSystem<SnowData>& ps, Grid& grid, float dt);
+
+template void g2p<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid, float dt);
+template void g2p<SnowData>(ParticleSystem<SnowData>& ps, const Grid& grid, float dt);
 
 #pragma endregion

@@ -15,8 +15,6 @@ public:
     // --- GPU Device Pointers ---
     float* d_Mi = nullptr; // Node mass
     Vector2f* d_Vi = nullptr; // Node velocity
-    Vector2f* d_Vi_col = nullptr; // Node velocity after collision
-    Vector2f* d_Vi_fri = nullptr; // Node velocity after friction
     Vector2f* d_Fi = nullptr; // Force applied to node
 
     void initialize(int res_x, int res_y) {
@@ -26,8 +24,6 @@ public:
 
         cudaMalloc(&d_Mi, num_nodes * sizeof(float));
         cudaMalloc(&d_Vi, num_nodes * sizeof(Vector2f));
-        cudaMalloc(&d_Vi_col, num_nodes * sizeof(Vector2f));
-        cudaMalloc(&d_Vi_fri, num_nodes * sizeof(Vector2f));
         cudaMalloc(&d_Fi, num_nodes * sizeof(Vector2f));
 
         clear();
@@ -36,14 +32,11 @@ public:
     void clear() {
         cudaMemset(d_Mi, 0, num_nodes * sizeof(float));
         cudaMemset(d_Vi, 0, num_nodes * sizeof(Vector2f));
-        cudaMemset(d_Vi_col, 0, num_nodes * sizeof(Vector2f));
-        cudaMemset(d_Vi_fri, 0, num_nodes * sizeof(Vector2f));
         cudaMemset(d_Fi, 0, num_nodes * sizeof(Vector2f));
     }
 
     void free() {
         cudaFree(d_Mi);
         cudaFree(d_Vi); cudaFree(d_Fi);
-        cudaFree(d_Vi_col); cudaFree(d_Vi_fri);
     }
 };
