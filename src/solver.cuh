@@ -6,22 +6,37 @@
 #include "constants.h"
 #include "boundary.h"
 
+
+
+/// <summary>
+/// Solve material constraints for each particle
+/// </summary>
+template <typename MatData>
+void solveConstraints(const ParticleSystem<MatData>& ps);
+
+
 /// <summary>
 /// Particle to grid. Transfer particle mass, momentum, and force (computed using stresses) to grid nodes using interpolation functions.
 /// </summary>
 template <typename MatData>
-void p2g(const ParticleSystem<MatData>& ps, Grid& grid, float dt);
+void p2g(const ParticleSystem<MatData>& ps, Grid& grid);
 
 /// <summary>
 /// Update nodal velocities via time integration while enforcing boundary conditions.
 /// </summary>
-void updateGrid(Grid& grid, float dt, CollisionManagerData collisionData);
+void updateGrid(Grid& grid, CollisionManagerData collisionData);
 
 /// <summary>
-/// Interpolate updated grid velocities back to particles. Update each particle’s deformation gradient based on local velocity gradients and advect particle positions using updated velocities.
+/// Interpolate updated grid velocities back to particles.
 /// </summary>
 template <typename MatData>
-void g2p(ParticleSystem<MatData>& ps, const Grid& grid, float dt);
+void g2p(ParticleSystem<MatData>& ps, const Grid& grid);
+
+/// <summary>
+/// Update each particle’s deformation gradient based on local velocity gradients and advect particle positions using updated velocities.
+/// </summary>
+template <typename MatData>
+void integrateParticle(ParticleSystem<MatData>& ps, const Grid& grid, float dt, CollisionManagerData collisionData);
 
 /// <summary>
 /// Init quadratic weights (grid step size is assumed to be 1.0)
@@ -30,7 +45,7 @@ void g2p(ParticleSystem<MatData>& ps, const Grid& grid, float dt);
 /// <param name="w">Returns the 3 stencil weights</param>
 /// <param name="dw">Returns the 3 stencil weights derivatives>
 /// <returns>Starting node index for the 3-node stencil</returns>
-__device__ inline Vector2f InitQuadraticWeights(Vector2f Xp, Vector2f w[3], Vector2f dw[3])
+__device__ inline Vector2f initQuadraticWeights(Vector2f Xp, Vector2f w[3], Vector2f dw[3])
 {
     // Quadratic stencil base node starts at floor(Xp - 0.5f)
     Vector2f base_node(

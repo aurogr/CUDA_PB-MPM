@@ -50,8 +50,13 @@ struct alignas(8) Vector2f {
     }
 };
 
+
 __host__ __device__ inline Vector2f operator*(float s, const Vector2f& v) {
-    return v * s; // Reutiliza el operador Vector2f * float que ya tienes
+    return v * s;
+}
+
+__host__ __device__ inline Vector2f operator+(const Vector2f& v, float s) {
+    return Vector2f(v.x + s, v.y + s);
 }
 
 struct alignas(16) Matrix2f {
@@ -132,7 +137,6 @@ struct alignas(16) Matrix2f {
         Matrix2f FTF = transpose() * (*this);
 
         float trace = FTF.m00 + FTF.m11;
-        float det = FTF.m00 * FTF.m11 - FTF.m01 * FTF.m10;
 
         float gap = FTF.m00 - FTF.m11;
         float term = sqrtf(fmaxf(0.0f, gap * gap + 4.0f * FTF.m01 * FTF.m01));

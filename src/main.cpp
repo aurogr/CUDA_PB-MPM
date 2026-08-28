@@ -16,7 +16,7 @@
 
 /* Globals */
 Grid grid;
-ParticleSystem<SnowData> ps;
+ParticleSystem<WaterData> ps;
 LevelSetCollisionManager collisionManager;
 
 int stepCount = 0;
@@ -87,7 +87,9 @@ void Initialization()
 
     // Spawn an initial shape of fluid
     std::vector<Vector2f> init_pos;
-    std::vector<Vector2f> init_vel;
+    std::vector<Vector2f> init_displacement;
+
+    Vector2f init_vel(10.0f, 0.0f);
 
     if (INIT_SPHERE) {
         Vector2f center(static_cast<float>(X_GRID) * 0.5f, static_cast<float>(Y_GRID) * 0.5f);
@@ -99,8 +101,10 @@ void Initialization()
         for (float x = -radius; x <= radius; x += spacing) {
             for (float y = -radius; y <= radius; y += spacing) {
                 if (x * x + y * y <= radius * radius) {
-                    init_pos.push_back(Vector2f(center.x + x, center.y + y));
-                    init_vel.push_back(Vector2f(10.0f, 0.0f));
+                    Vector2f pos(center.x + x, center.y + y);
+                    init_pos.push_back(pos);
+                    pos += PHYSICS_DT * init_vel;
+                    init_displacement.push_back(pos);
                 }
             }
         }
@@ -108,27 +112,26 @@ void Initialization()
         int particle_count = static_cast<int>(init_pos.size());
 
         // Pass the corrected values into your particle system initialization
-        ps.initialize(particle_count, init_pos, init_vel);
+        ps.initialize(particle_count, init_pos, init_displacement);
     } else
-        ps.initialize(static_cast<int>(init_pos.size()), init_pos, init_vel);
+        ps.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
 }
 
 void AddParticles() {
-    std::vector<Vector2f> new_pos;
-    std::vector<Vector2f> new_vel;
+    std::vector<Vector2f> init_pos;
+    std::vector<Vector2f> init_displacement;
 
-    Vector2f v(30.0f, 0.0f);
+    Vector2f init_vel(30.0f, 0.0f);
 
     for (int p = 0; p < 8; ++p) {
         float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
-        float pos_x = static_cast<float>(INT_CELL_SPAN);
-        float pos_y = static_cast<float>(Y_GRID) - 2.0f * static_cast<float>(INT_CELL_SPAN) - 0.5f * static_cast<float>(p) - r;
-
-        new_pos.push_back(make_float2(pos_x, pos_y));
-        new_vel.push_back(v);
+        Vector2f pos (static_cast<float>(INT_CELL_SPAN), static_cast<float>(Y_GRID) - 2.0f * static_cast<float>(INT_CELL_SPAN) - 0.5f * static_cast<float>(p) - r);
+        init_pos.push_back(pos);
+        pos += PHYSICS_DT * init_vel;
+        init_displacement.push_back(pos);
     }
 
-    ps.addParticlesMidSimulation(new_pos, new_vel);
+    ps.addParticlesMidSimulation(init_pos, init_displacement);
 }
 
 void Update()
@@ -139,10 +142,14 @@ void Update()
      
     stepCount++;
 
-    grid.clear();
-    p2g(ps, grid, PHYSICS_DT);
-    updateGrid(grid, PHYSICS_DT, collisionManager.getDeviceData());
-    g2p(ps, grid, PHYSICS_DT);
+    for (int i = 0; i < SIM_STEPS; i++) {
+        solveConstraints(ps);
+        grid.clear();
+        p2g(ps, grid);
+        updateGrid(grid, collisionManager.getDeviceData());
+        g2p(ps, grid);
+    }
+    integrateParticle(ps, grid, PHYSICS_DT, collisionManager.getDeviceData());
 }
 #pragma endregion
 
