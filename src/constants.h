@@ -25,17 +25,17 @@ const static double RENDER_DT = 0.016; // 60 FPS
 /* ----- SIMULATION ----- */
 inline constexpr int MAX_PARTICLES = 15000;
 
-const static float PHYSICS_DT = 0.0005f;	// Physics timeStep needed for stability (for water it cannot be higher than 0.001)
+const static float PHYSICS_DT = 0.01f;
 
-const static float GRAVITY = -9.81f;
+const static float GRAVITY = 9.81f;
 
 const static int SIM_SUBSTEPS = static_cast<int>(RENDER_DT / PHYSICS_DT); // Simulation substeps needed to control the render framerate
 
 const static int EMISSION_INTERVAL = SIM_SUBSTEPS; // Rate of particles addition (if = to SIM_SUBSTEPS it emits particles every rendered frame)
 
-const bool INIT_SPHERE = false;
-const bool ADD_MID_SIM = true;
-const int SIM_STEPS = 5;
+const bool INIT_SPHERE = true;
+const bool ADD_MID_SIM = false;
+const int SIM_STEPS = 3;
 
 /* ----- QUADRATIC INTERPOLATION ----- */
 const static float INT_CELL_SPAN = 1.5f;

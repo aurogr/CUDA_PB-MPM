@@ -89,7 +89,7 @@ void Initialization()
     std::vector<Vector2f> init_pos;
     std::vector<Vector2f> init_displacement;
 
-    Vector2f init_vel(10.0f, 0.0f);
+    Vector2f init_vel(0.0f, 0.0f);
 
     if (INIT_SPHERE) {
         Vector2f center(static_cast<float>(X_GRID) * 0.5f, static_cast<float>(Y_GRID) * 0.5f);
@@ -101,10 +101,8 @@ void Initialization()
         for (float x = -radius; x <= radius; x += spacing) {
             for (float y = -radius; y <= radius; y += spacing) {
                 if (x * x + y * y <= radius * radius) {
-                    Vector2f pos(center.x + x, center.y + y);
-                    init_pos.push_back(pos);
-                    pos += PHYSICS_DT * init_vel;
-                    init_displacement.push_back(pos);
+                    init_pos.push_back(Vector2f(center.x + x, center.y + y));
+                    init_displacement.push_back(PHYSICS_DT * init_vel);
                 }
             }
         }
@@ -121,14 +119,12 @@ void AddParticles() {
     std::vector<Vector2f> init_pos;
     std::vector<Vector2f> init_displacement;
 
-    Vector2f init_vel(30.0f, 0.0f);
+    Vector2f init_vel(10.0f, 0.0f);
 
     for (int p = 0; p < 8; ++p) {
         float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
-        Vector2f pos (static_cast<float>(INT_CELL_SPAN), static_cast<float>(Y_GRID) - 2.0f * static_cast<float>(INT_CELL_SPAN) - 0.5f * static_cast<float>(p) - r);
-        init_pos.push_back(pos);
-        pos += PHYSICS_DT * init_vel;
-        init_displacement.push_back(pos);
+        init_pos.push_back(Vector2f(static_cast<float>(INT_CELL_SPAN), static_cast<float>(Y_GRID) - 2.0f * static_cast<float>(INT_CELL_SPAN) - 0.5f * static_cast<float>(p) - r));
+        init_displacement.push_back(PHYSICS_DT * init_vel);
     }
 
     ps.addParticlesMidSimulation(init_pos, init_displacement);
@@ -355,8 +351,7 @@ int main()
             // window renders every frame but simulation runs (in substeps) only when unpased
             if (!pauseSimulation || stepOnce) {
 
-                for(int step = 0; step < SIM_SUBSTEPS; step++)
-                    Update();
+                Update();
 
                 stepOnce = false;
             }

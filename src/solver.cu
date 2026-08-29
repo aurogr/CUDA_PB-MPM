@@ -26,69 +26,15 @@ __device__ void computeDisplacement(const WaterData& mat, int p, Matrix2f& Dp)
     Dp += mat.RELAXATION * alpha * identity();
 }
 
-__device__ void computeDisplacement(const SnowData& mat, int p, Matrix2f& Dp) 
-{
-    
-}
-
-
-//__device__ Matrix2f ComputeAp(const SnowData& mat, int p, float Vp0) {
-//    float Jp = mat.d_Jp[p];
-//    Matrix2f Fe = mat.d_Fe[p];
-//    Matrix2f Fp;
-//
-//    // Compute Lame parameters
-//    float plastic_hardening_factor = std::exp(mat.KSI * (1.0f - Jp));
-//    float mu = mat.MU_0 * plastic_hardening_factor;
-//    float lambda = mat.LAMBDA_0 * plastic_hardening_factor;
-//
-//    // Polar decomposition to extract rotation (Fe = Re * Se)
-//    Matrix2f Re, Se;
-//    Fe.polar_decomp(&Re, &Se);
-//
-//    // Compute kirchhoff stress tensor
-//    float Je = Fe.det();
-//    auto stress_tensor = 2.0f * mu * (Fe - Re) * Fe.transpose() + lambda * Je * (Je - 1.0f) * identity();
-//
-//    // Compute Ap
-//    Matrix2f Ap = Vp0 * stress_tensor;
-//
-//    return Ap;
-//}
-
 __device__ void updateDeformation(const WaterData& mat, int p, Matrix2f Dp) {
     // Liquids hold no memory of shape, they only care about volume, so storing only the determinant of the deformation gradient is enough
 
     // The true update for volume is det(F_new) = det(I + Dp) * det(F_old)
     // but as before, we can use the trace instead of the complicated determinant
     mat.d_Jp[p] *= (1.0f + Dp.trace());
+    mat.d_Jp[p] = fmaxf(mat.d_Jp[p], 0.1f); // Never allow J <= 0
 }
 
-__device__ void updateDeformation(const SnowData& mat, int p, Matrix2f Dp) {
-    //Matrix2f FeTr = (identity() + dt * T) * mat.d_Fe[p];
-    //Matrix2f FpTr = mat.d_Fp[p];
-
-    //Matrix2f U, V;
-    //Vector2f Eps;
-    //FeTr.svd(&U, &Eps, &V);
-
-    //Vector2f proj = Eps.clamp(1.0f - mat.THT_C, 1.0f + mat.THT_S);
-
-    //Matrix2f Fe = U.diag_product(proj) * V.transpose();
-
-    //Vector2f plastic_factor(
-    //    proj.x / (Eps.x + 1e-12f),
-    //    proj.y / (Eps.y + 1e-12f)
-    //);
-    //Matrix2f DiagInvRatio(plastic_factor.x, 0.0f, 0.0f, plastic_factor.y);
-
-    //Matrix2f Fp = V * DiagInvRatio * V.transpose() * FpTr;
-
-    //// Write back to GPU
-    //mat.d_Fe[p] = Fe;
-    //mat.d_Fp[p] = Fp;
-    //mat.d_Jp[p] = Fp.det();
-}
 #pragma endregion
 
 #pragma region Collisions
@@ -153,33 +99,31 @@ __device__ void computeCollidersDisplacement(const Vector2f Xi, Vector2f& Di, Co
         checkCollision(Xi_pred, obj, phi, n);
 
         // 3. Recalculate displacement if predicted position goes inside object
-        if (phi < 0.0f) {
-            float depth = -phi;
+        if (phi <= 0.0f) {
+            float vn = Di.dot(n); // Normal displacement
 
-            // 3.1 Push displacement back to surface
-            Di += n * depth;
+            if (vn < 0.0f) {
+                Vector2f Dt = Di - n * vn; // Tangential displacement
+                float Dt_len = Dt.length();
 
-            // 3.2 Coulomb friction to add tangential displacement
-            float Dn = Di.dot(n); // normal displacement magnitude
-            Vector2f Dt = Di - n * Dn; // tangential displacement vector
-            float Dt_len = Dt.length();
+                // Apply Coulomb friction to
+                if (Dt_len > 1e-5f) {
+                    float friction_limit = obj.friction * (-vn); // Friction scales with normal force
 
-            if (Dt_len > 1e-5f) {
-                float friction_limit = obj.friction * depth;
+                    if (Dt_len <= friction_limit)
+                        Dt = Vector2f(0.0f, 0.0f); // Static friction
+                    else
+                        Dt -= (Dt / Dt_len) * friction_limit; // Kinetic friction
+                }
 
-                if (Dt_len <= friction_limit) // Static friction: completely stop tangential sliding
-                    Dt = Vector2f(0.0f, 0.0f);
-                else // Kinetic friction: reduce tangential displacement by friction impulse
-                    Dt -= (Dt / Dt_len) * friction_limit;
-
-                // 3.3 Update displacement
-                Di = n * Dn + Dt;
+                // Reconstruct displacement: keep tangent, zero out inward normal
+                Di = Dt;
             }
         }
     }
 }
 
-__device__ void pushOutOfCollider(Vector2f& Xp, CollisionManagerData colliders) {
+__device__ void pushOutOfCollider(Vector2f& Xp, Vector2f&Xp_delta, CollisionManagerData colliders) {
     for (int i = 0; i < colliders.count; i++) {
         // 1. Check collision
         CollisionObjectData obj = colliders.d_objects[i];
@@ -191,7 +135,19 @@ __device__ void pushOutOfCollider(Vector2f& Xp, CollisionManagerData colliders) 
         // 2. Push out to surface
         if (phi < 0.0f) {
             float depth = -phi;
+
+            // Push position out to surface
             Xp += n * depth;
+
+            // Kill momentum 
+            float vn = Xp_delta.dot(n);
+            if (vn < 0.0f) {
+                // Remove the normal velocity
+                Xp_delta -= n * vn;
+
+                // (Optional) Apply simple friction to tangential velocity
+                // Xp_delta *= 0.95f;
+            }
         }
     }
 }
@@ -236,7 +192,7 @@ __global__ void p2g_kernel(const Vector2f* d_Xp, const Vector2f* d_Xp_delta, con
             // (3.2) Compute accumulation on nodes
 
             // Offset from particle to node center is needed for APIC
-            Vector2f offset = (node - Xp) + 0.5f; // 0.5f because a cell is 1.0f
+            Vector2f offset = node - Xp;
             
             // Weighted mass: mi = sum(Wip * Mp)
             float Wip = w[x].x * w[y].y;
@@ -261,8 +217,8 @@ __global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Di,
 
     float Mi = d_Mi[i];
 
-    if (Mi < 1e-7f) {
-        d_Di[i] = make_float2(0.0f, 0.0f);
+    if (Mi < 1e-5f) {
+        d_Di[i] = Vector2f(0.0f, 0.0f);
         return;
     }
 
@@ -285,7 +241,7 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, Matrix2f* d_Dp,
     if (p >= num_particles) return;
 
     Vector2f Xp = d_Xp[p];
-    Vector2f Xp_delta;
+    Vector2f Xp_delta(0.0f, 0.0f);
     Matrix2f Bp (0.0f, 0.0f, 0.0f, 0.0f);
 
     // (2) Get base grid node and init weights
@@ -306,7 +262,7 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, Matrix2f* d_Dp,
             Xp_delta += WipDi;
 
             // Offset from particle to node center is needed for APIC
-            Vector2f offset = (node - Xp) + 0.5f; // 0.5f because a cell is 1.0f
+            Vector2f offset = node - Xp;
             Bp += outer_product(WipDi, offset);
         }
     }
@@ -328,10 +284,10 @@ __global__ void integrateParticle_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, M
     d_Xp[p] += d_Xp_delta[p];
 
     // 3. Explicit external forces displacement (x = at^2)
-    d_Xp[p].y -= G * dt * dt;
+    d_Xp_delta[p].y -= G * dt * dt;
 
     // 4. Check again against colliders to push position out of them if it is inside
-    pushOutOfCollider(d_Xp[p], collisionData);
+    pushOutOfCollider(d_Xp[p], d_Xp_delta[p], collisionData);
 
     // 5. Clamp particle position so it isn't outside the domain of the grid 
     // because of the interpolation used and the cell being 1.0f wide the domain is 1.5f units less on each side than grid size
@@ -402,15 +358,11 @@ void integrateParticle(ParticleSystem<MatData>& ps, const Grid& grid, float dt, 
 
 #pragma region Explicit instantiation
 template void solveConstraints<WaterData>(const ParticleSystem<WaterData>& ps);
-template void solveConstraints<SnowData>(const ParticleSystem<SnowData>& ps);
 
 template void p2g<WaterData>(const ParticleSystem<WaterData>& ps, Grid& grid);
-template void p2g<SnowData>(const ParticleSystem<SnowData>& ps, Grid& grid);
 
 template void g2p<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid);
-template void g2p<SnowData>(ParticleSystem<SnowData>& ps, const Grid& grid);
 
 template void integrateParticle<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid, float dt, CollisionManagerData collisionData);
-template void integrateParticle<SnowData>(ParticleSystem<SnowData>& ps, const Grid& grid, float dt, CollisionManagerData collisionData);
 
 #pragma endregion

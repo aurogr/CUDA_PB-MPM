@@ -26,53 +26,6 @@ struct WaterData {
     }
 };
 
-struct SnowData {
-
-    Matrix2f* d_Fe; // Elastic deformation gradient
-    Matrix2f* d_Fp; // Plastic deformation gradient
-    float* d_Jp;    // Deformation gradient
-
-    // CONSTANTS
-    const float THT_C = 5.0e-3f;				// Critical compression
-    const float THT_S = 5.0e-4f;				// Critical stretch (lower makes it brittle)
-    const float KSI = 1.0f;						// Hardening coefficient
-    const float RHO = 4.0e2f;					// Density
-    const float E = 1.4e5f;						// Young's modulus
-    const float V = 0.2f;						// Poisson's ratio
-
-    const float MU_0 = E / (1.0f + V) / 2.0f;      // Base shear modulus
-    const float LAMBDA_0 = E * V / (1.0f + V) / (1.0f - 2.0f * V);  // Base Lame's first parameter
-
-
-    void allocate(int num_particles) {
-        cudaMalloc(&d_Fe, MAX_PARTICLES * sizeof(Matrix2f));
-        cudaMalloc(&d_Fp, MAX_PARTICLES * sizeof(Matrix2f));
-        cudaMalloc(&d_Jp, MAX_PARTICLES * sizeof(float));
-
-        std::vector<Matrix2f> h_Fe(num_particles, identity());
-        std::vector<float> h_Jp(num_particles, 1.0f);
-
-        cudaMemcpy(d_Fe, h_Fe.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_Fp, h_Fe.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_Jp, h_Jp.data(), num_particles * sizeof(float), cudaMemcpyHostToDevice);
-    }
-    void addParticlesMidSimulation(int add_count, int offset) const {
-
-        // Create new batch of vectors
-        std::vector<Matrix2f> h_Fe(add_count, identity());
-        std::vector<float> h_Jp(add_count, 1.0);
-
-        // Upload the new batch to memory, at the end of the last used position, on the reserved space
-        cudaMemcpy(d_Fe + offset, h_Fe.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_Fp + offset, h_Fe.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_Jp + offset, h_Jp.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
-    }
-    void free() const {
-        cudaFree(d_Fe);
-        cudaFree(d_Jp);
-    }
-};
-
 template <typename MatData>
 class ParticleSystem {
 public:
