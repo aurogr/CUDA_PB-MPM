@@ -81,7 +81,7 @@ void Initialization()
     );
 
     // Collider sphere
-    collisionManager.addSphere(Vector2f(75.0f, 20.0f), 10.0f, .3f);
+    collisionManager.addSphere(Vector2f(20.0f, 15.0f), 10.0f, .3f);
 
     collisionManager.copyToDevice();
 

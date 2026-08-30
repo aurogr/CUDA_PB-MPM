@@ -1,8 +1,8 @@
 #pragma once
 
 /* ----- GRID ----- */
-const static int X_GRID = 200; // Size of the domain
-const static int Y_GRID = 100;
+const static int X_GRID = 100; // Size of the domain
+const static int Y_GRID = 50;
 
 const static int PARTICLES_PER_CELL_AXIS = 2;
 
@@ -25,7 +25,7 @@ const static double RENDER_DT = 0.016; // 60 FPS
 /* ----- SIMULATION ----- */
 inline constexpr int MAX_PARTICLES = 15000;
 
-const static float PHYSICS_DT = 0.01f;
+const static float PHYSICS_DT = 0.05f;
 
 const static float GRAVITY = 9.81f;
 
@@ -35,7 +35,7 @@ const static int EMISSION_INTERVAL = SIM_SUBSTEPS; // Rate of particles addition
 
 const bool INIT_SPHERE = true;
 const bool ADD_MID_SIM = false;
-const int SIM_STEPS = 3;
+const int SIM_STEPS = 10;
 
 /* ----- QUADRATIC INTERPOLATION ----- */
 const static float INT_CELL_SPAN = 1.5f;
