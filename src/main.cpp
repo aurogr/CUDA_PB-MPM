@@ -16,7 +16,7 @@
 
 /* Globals */
 Grid grid;
-ParticleSystem<SnowData> ps;
+ParticleSystem<WaterData> ps;
 LevelSetCollisionManager collisionManager;
 
 int stepCount = 0;
@@ -81,7 +81,7 @@ void Initialization()
     );
 
     // Collider sphere
-    collisionManager.addSphere(Vector2f(75.0f, 20.0f), 10.0f, .3f);
+    collisionManager.addSphere(Vector2f(20.0f, 15.0f), 10.0f, .3f);
 
     collisionManager.copyToDevice();
 
@@ -100,7 +100,7 @@ void Initialization()
             for (float y = -radius; y <= radius; y += spacing) {
                 if (x * x + y * y <= radius * radius) {
                     init_pos.push_back(Vector2f(center.x + x, center.y + y));
-                    init_vel.push_back(Vector2f(10.0f, 0.0f));
+                    init_vel.push_back(Vector2f(0.0f, 0.0f));
                 }
             }
         }
