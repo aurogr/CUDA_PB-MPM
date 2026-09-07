@@ -35,7 +35,7 @@ const static int EMISSION_INTERVAL = SIM_SUBSTEPS; // Rate of particles addition
 
 const bool INIT_SPHERE = true;
 const bool ADD_MID_SIM = false;
-const int SIM_STEPS = 10;
+const int SOLVER_ITERATIONS = 4;
 
 /* ----- QUADRATIC INTERPOLATION ----- */
 const static float INT_CELL_SPAN = 1.5f;

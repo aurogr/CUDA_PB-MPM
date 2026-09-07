@@ -86,7 +86,7 @@ __device__ void checkCollision(const Vector2f pos, CollisionObjectData obj, floa
     }
 }
 
-__device__ void computeCollidersDisplacement(const Vector2f Xi, Vector2f& Di, CollisionManagerData colliders) {
+__device__ void computeCollidersDisplacement(const Vector2f Xi, Vector2f& Di, CollisionManagerDeviceData colliders) {
     for (int i = 0; i < colliders.count; i++) {
         // 1. Compute candidate position 
         Vector2f Xi_pred = Xi + Di;
@@ -123,7 +123,7 @@ __device__ void computeCollidersDisplacement(const Vector2f Xi, Vector2f& Di, Co
     }
 }
 
-__device__ void pushOutOfCollider(Vector2f& Xp, Vector2f&Xp_delta, CollisionManagerData colliders) {
+__device__ void pushOutOfCollider(Vector2f& Xp, Vector2f&Xp_delta, CollisionManagerDeviceData colliders) {
     for (int i = 0; i < colliders.count; i++) {
         // 1. Check collision
         CollisionObjectData obj = colliders.d_objects[i];
@@ -210,7 +210,7 @@ __global__ void p2g_kernel(const Vector2f* d_Xp, const Vector2f* d_Xp_delta, con
 }
 
 __global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Di,
-    const int num_nodes, const int gridX, const int gridY, CollisionManagerData collisionData) 
+    const int num_nodes, const int gridX, const int gridY, CollisionManagerDeviceData collisionData) 
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= num_nodes) return;
@@ -274,7 +274,7 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, Matrix2f* d_Dp,
 
 template <typename MatData>
 __global__ void integrateParticle_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, Matrix2f* d_Dp, MatData d_mat,
-    const int num_particles, const int gridX, const int gridY, const float dt, const float G, CollisionManagerData collisionData)
+    const int num_particles, const int gridX, const int gridY, const float dt, const float G, CollisionManagerDeviceData collisionData)
 {
     // 1. Get particle (thread per particle) and its characteristics
     int p = blockIdx.x * blockDim.x + threadIdx.x;
@@ -322,7 +322,7 @@ void p2g(const ParticleSystem<MatData>& ps, Grid& grid)
         grid.d_Mi, grid.d_Di, grid.grid_x, grid.grid_y);
 }
 
-void updateGrid(Grid& grid, CollisionManagerData collisionData)
+void updateGrid(Grid& grid, CollisionManagerDeviceData collisionData)
 {
     int blockSize = 256;
     int gridSize = (grid.num_nodes + blockSize - 1) / blockSize;
@@ -343,7 +343,7 @@ void g2p(ParticleSystem<MatData>& ps, const Grid& grid)
 }
 
 template <typename MatData>
-void integrateParticle(ParticleSystem<MatData>& ps, const Grid& grid, float dt, CollisionManagerData collisionData)
+void integrateParticle(ParticleSystem<MatData>& ps, const Grid& grid, float dt, CollisionManagerDeviceData collisionData)
 {
     if (ps.num_particles == 0) return;
     int blockSize = 256;
@@ -363,6 +363,6 @@ template void p2g<WaterData>(const ParticleSystem<WaterData>& ps, Grid& grid);
 
 template void g2p<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid);
 
-template void integrateParticle<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid, float dt, CollisionManagerData collisionData);
+template void integrateParticle<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid, float dt, CollisionManagerDeviceData collisionData);
 
 #pragma endregion

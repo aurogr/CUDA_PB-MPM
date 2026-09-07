@@ -100,3 +100,20 @@ public:
         d_Mat.free();
     }
 };
+
+struct SimulationParticles
+{
+    ParticleSystem<WaterData> water;
+    ParticleSystem<WaterData> snow; // TODO: CHANGE
+    ParticleSystem<WaterData> elastic; // TODO: CHANGE
+
+    int inline getParticlesCount() {
+        return water.num_particles + snow.num_particles + elastic.num_particles;
+    }
+
+    void inline free() {
+        water.free();
+        snow.free();
+        elastic.free();
+    }
+};
