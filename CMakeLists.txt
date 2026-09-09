@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(CUDA_MPM LANGUAGES CXX CUDA)
+project(CUDA_PB_MPM LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
@@ -77,3 +77,7 @@ if(WIN32)
         )
     endforeach()
 endif()
+
+add_custom_target(GUI_Launcher 
+    SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gui/launcher.py"
+)
