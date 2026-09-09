@@ -15,7 +15,7 @@ class RealtimeStudioLauncher(QWidget):
         gui_x = 50
         gui_y = 100
         gui_w = 400
-        gui_h = 600
+        gui_h = 540
         self.setGeometry(gui_x, gui_y, gui_w, gui_h)
 
         # Calculate position for C++ OpenGL window (to the right of GUI)
@@ -31,28 +31,41 @@ class RealtimeStudioLauncher(QWidget):
     def init_ui(self):
         layout = QVBoxLayout()
 
-        # Controls Group
-        controls_group = QGroupBox("Live Simulation Controls")
-        form = QFormLayout()
+        # Startup controls group
+        controls_group_startup = QGroupBox("Startup simulation parameters")
+        formStartup = QFormLayout()
 
-        # 1. DT Slider
-        self.dt_label = QLabel("Time Step")
+        # 1. Init sphere Checkbox
+        self.init_sphere = QCheckBox("")
+        formStartup.addRow("Init with water sphere:", self.init_sphere)
+        controls_group_startup.setLayout(formStartup)
+        layout.addWidget(controls_group_startup)
+
+        # Real time controls group
+        controls_group_running = QGroupBox("Real time simulation parameters")
+        formRunning = QFormLayout()
+        
+        # 1. Add mid sim Checkbox
+        self.add_mid_sim = QCheckBox("")
+        self.add_mid_sim.stateChanged.connect(self.on_add_mid_sim_changed)
+
+        # 2. TimeStep Slider
+        self.dt_label = QLabel("dt: 0.05")
         self.dt_slider = QSlider(Qt.Horizontal)
-
-        # Range: 1 to 1000 (1 / 10000 = 0.0001, 1000 / 10000 = 0.1000)
-        self.dt_slider.setRange(1, 1000)
-        self.dt_slider.setValue(500) # Default dt = 0.500
+        self.dt_slider.setRange(1, 100)
+        self.dt_slider.setValue(50)
         self.dt_slider.valueChanged.connect(self.on_dt_changed)
 
-        # 2. Pause Toggle
-        self.pause_check = QCheckBox("Pause Simulation")
+        # 3. Pause Checkbox
+        self.pause_check = QCheckBox("")
         self.pause_check.stateChanged.connect(self.on_pause_changed)
-
-        form.addRow("Time Step (dt):", self.dt_slider)
-        form.addRow("", self.dt_label)
-        form.addRow("State:", self.pause_check)
-        controls_group.setLayout(form)
-        layout.addWidget(controls_group)
+        
+        formRunning.addRow("Add particles mid simulation:", self.add_mid_sim)
+        formRunning.addRow("Time Step (dt):", self.dt_slider)
+        formRunning.addRow("", self.dt_label)
+        formRunning.addRow("Pause simulation:", self.pause_check)
+        controls_group_running.setLayout(formRunning)
+        layout.addWidget(controls_group_running)
 
         # Launch Button
         self.launch_btn = QPushButton("Start Engine")
@@ -80,17 +93,27 @@ class RealtimeStudioLauncher(QWidget):
             return
 
         # Add arguments to process start
-        dt_val = self.dt_slider.value() / 10000.0
+        init_sphere_str = "1" if self.init_sphere.isChecked() else "0"
+        add_mid_sim_str = "1" if self.add_mid_sim.isChecked() else "0"
+        dt_val = self.dt_slider.value() / 1000.0
         is_paused_str = "1" if self.pause_check.isChecked() else "0"
-        args = [str(dt_val), is_paused_str, str(self.sim_x), str(self.sim_y)]
+        args = [str(self.sim_x), str(self.sim_y), init_sphere_str, add_mid_sim_str, str(dt_val), is_paused_str]
 
         # Convert Path object to string for QProcess
         self.process.start(str(exe_path), args)
 
     # Handle events while simulation is running by passing commands
-    def on_dt_changed(self, value):   
+    def on_add_mid_sim_changed(self, value):   
         if self.process.state() == QProcess.Running:
-            dt_val = value / 10000.0     
+            add_mid_sim = 1 if self.add_mid_sim.isChecked() else 0
+            command = f"MID_SIM {add_mid_sim}\n"
+            self.process.write(command.encode("utf-8"))
+
+    def on_dt_changed(self, value):   
+        dt_val = value / 1000.0
+        self.dt_label.setText(f"dt: {dt_val:.4f}")
+        if self.process.state() == QProcess.Running:
+            dt_val = value / 1000.0     
             command = f"DT {dt_val}\n"
             self.process.write(command.encode("utf-8"))
 

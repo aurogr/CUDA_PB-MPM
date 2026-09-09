@@ -343,7 +343,7 @@ void g2p(ParticleSystem<MatData>& ps, const Grid& grid)
 }
 
 template <typename MatData>
-void integrateParticle(ParticleSystem<MatData>& ps, const Grid& grid, float dt, CollisionManagerDeviceData collisionData)
+void integrateParticle(ParticleSystem<MatData>& ps, const Grid& grid, float dt, float gravity, CollisionManagerDeviceData collisionData)
 {
     if (ps.num_particles == 0) return;
     int blockSize = 256;
@@ -351,7 +351,7 @@ void integrateParticle(ParticleSystem<MatData>& ps, const Grid& grid, float dt, 
 
     integrateParticle_kernel << <gridSize, blockSize >> >
         (ps.d_Xp, ps.d_Xp_delta, ps.d_Dp, ps.d_Mat, ps.num_particles,
-        grid.grid_x, grid.grid_y, dt, GRAVITY, collisionData);
+        grid.grid_x, grid.grid_y, dt, gravity, collisionData);
 }
 
 #pragma endregion
@@ -363,6 +363,6 @@ template void p2g<WaterData>(const ParticleSystem<WaterData>& ps, Grid& grid);
 
 template void g2p<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid);
 
-template void integrateParticle<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid, float dt, CollisionManagerDeviceData collisionData);
+template void integrateParticle<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid, float dt, float gravity, CollisionManagerDeviceData collisionData);
 
 #pragma endregion

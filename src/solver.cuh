@@ -36,7 +36,7 @@ void g2p(ParticleSystem<MatData>& ps, const Grid& grid);
 /// Update each particle’s deformation gradient based on local velocity gradients and advect particle positions using updated velocities.
 /// </summary>
 template <typename MatData>
-void integrateParticle(ParticleSystem<MatData>& ps, const Grid& grid, float dt, CollisionManagerDeviceData collisionData);
+void integrateParticle(ParticleSystem<MatData>& ps, const Grid& grid, float dt, float gravity, CollisionManagerDeviceData collisionData);
 
 /// <summary>
 /// Init quadratic weights (grid step size is assumed to be 1.0)

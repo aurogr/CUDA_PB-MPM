@@ -47,14 +47,18 @@ void listenToPythonCommands() {
                 float newDt;
                 if (ss >> newDt) {
                     simEngine.dt = newDt;
-                    std::cout << "[C++ Engine] Updated dt to: " << newDt << std::endl;
                 }
             }
             else if (command == "PAUSE") {
                 int pauseState;
                 if (ss >> pauseState) {
                     simEngine.isPaused = pauseState;
-                    std::cout << "[C++ Engine] Pause state set to: " << pauseState << std::endl;
+                }
+            }
+            else if (command == "MID_SIM") {
+                int add_mid_sim;
+                if (ss >> add_mid_sim) {
+                    simEngine.add_mid_sim = add_mid_sim;
                 }
             }
         }
@@ -67,17 +71,17 @@ void listenToPythonCommands() {
 int main(int argc, char* argv[])
 {
     // Default values if run directly from Visual Studio
-    float timeStep = 0.05f;
-    bool startPaused = false;
     int winX = 100;
     int winY = 500;
 
     // Get arguments from python launcher (if there are none we aren't using python)
     if (argc > 1) {
-        timeStep = static_cast<float>(std::atof(argv[1]));
-        startPaused = (std::atoi(argv[2]) == 1); 
-        winX = std::stoi(argv[3]);
-        winY = std::stoi(argv[4]);
+        winX = std::stoi(argv[1]);
+        winY = std::stoi(argv[2]);
+        simEngine.init_sphere = (std::atoi(argv[3]) == 1);
+        simEngine.add_mid_sim = (std::atoi(argv[4]) == 1);
+        simEngine.dt = static_cast<float>(std::atof(argv[5]));
+        simEngine.isPaused = (std::atoi(argv[6]) == 1);
 
         listenToPythonCommands();
     }    
@@ -97,9 +101,6 @@ int main(int argc, char* argv[])
     glfwSetWindowPos(window, winX, winY);
 
     glfwMakeContextCurrent(window);
-
-    simEngine.dt = timeStep;
-    simEngine.isPaused = startPaused;
 
     // Instantiate engines
     simEngine.initialize();

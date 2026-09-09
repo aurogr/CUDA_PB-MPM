@@ -4,8 +4,7 @@
 #include "constants.h"
 #include "solver.cuh"
 
-Simulation::Simulation()
-    : dt(PHYSICS_DT), isPaused(false) {
+Simulation::Simulation() {
 }
 
 Simulation::~Simulation() {
@@ -34,7 +33,7 @@ void Simulation::initialize() {
 
     Vector2f init_vel(0.0f, 0.0f);
 
-    if (INIT_SPHERE) {
+    if (init_sphere) {
 
         init_pos.reserve(MAX_PARTICLES);
         init_displacement.reserve(MAX_PARTICLES);
@@ -49,7 +48,7 @@ void Simulation::initialize() {
             for (float y = -radius; y <= radius; y += spacing) {
                 if (x * x + y * y <= radius * radius) {
                     init_pos.push_back(Vector2f(center.x + x, center.y + y));
-                    init_displacement.push_back(PHYSICS_DT * init_vel);
+                    init_displacement.push_back(dt * init_vel);
                 }
             }
         }
@@ -63,7 +62,7 @@ void Simulation::initialize() {
         ps.water.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
 }
 
-void AddParticlesMidSim(SimulationParticles& ps) {
+void AddParticlesMidSim(SimulationParticles& ps, float dt) {
     // Add water particles mid sim
     std::vector<Vector2f> init_pos;
     std::vector<Vector2f> init_displacement;
@@ -73,22 +72,22 @@ void AddParticlesMidSim(SimulationParticles& ps) {
     for (int p = 0; p < 8; ++p) {
         float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
         init_pos.push_back(Vector2f(static_cast<float>(INT_CELL_SPAN), static_cast<float>(Y_GRID) - 2.0f * static_cast<float>(INT_CELL_SPAN) - 0.5f * static_cast<float>(p) - r));
-        init_displacement.push_back(PHYSICS_DT * init_vel);
+        init_displacement.push_back(dt * init_vel);
     }
 
     ps.water.addParticlesMidSimulation(init_pos, init_displacement);
 }
 
 void Simulation::step() {
-    if (isPaused || ps.getParticlesCount() == 0) return;
+    if (isPaused || (ps.getParticlesCount() == 0 && !add_mid_sim)) return;
 
     stepCount++;
 
-    if (ps.getParticlesCount() < MAX_PARTICLES && stepCount % EMISSION_INTERVAL == 0 && ADD_MID_SIM) {
-        AddParticlesMidSim(ps);
+    if (ps.getParticlesCount() < MAX_PARTICLES /*&& stepCount % EMISSION_INTERVAL == 0*/ && add_mid_sim) {
+        AddParticlesMidSim(ps, dt);
     }
 
-    for (int i = 0; i < SOLVER_ITERATIONS; i++) {
+    for (int i = 0; i < solver_iterations; i++) {
 
         if (ps.water.num_particles != 0) solveConstraints(ps.water);
         if (ps.snow.num_particles != 0) solveConstraints(ps.snow);
@@ -107,9 +106,9 @@ void Simulation::step() {
         if (ps.elastic.num_particles != 0) g2p(ps.elastic, grid);
     }
 
-    if (ps.water.num_particles != 0) integrateParticle(ps.water, grid, dt, collisionManager.getDeviceData());
-    if (ps.snow.num_particles != 0) integrateParticle(ps.snow, grid, dt, collisionManager.getDeviceData());
-    if (ps.elastic.num_particles != 0) integrateParticle(ps.elastic, grid, dt, collisionManager.getDeviceData());
+    if (ps.water.num_particles != 0) integrateParticle(ps.water, grid, dt, gravity, collisionManager.getDeviceData());
+    if (ps.snow.num_particles != 0) integrateParticle(ps.snow, grid, dt, gravity, collisionManager.getDeviceData());
+    if (ps.elastic.num_particles != 0) integrateParticle(ps.elastic, grid, dt, gravity, collisionManager.getDeviceData());
 }
 
 void Simulation::free() {
