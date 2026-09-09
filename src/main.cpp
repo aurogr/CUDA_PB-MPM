@@ -19,6 +19,7 @@
 Simulation simEngine;
 GLRenderer renderEngine;
 
+#pragma region OpenGL RT interaction (deprecated)
 // Key callback function
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     if (action == GLFW_PRESS) {
@@ -27,11 +28,17 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         }
     }
 }
+#pragma endregion
 
+#pragma region Python RT interaction
 void listenToPythonCommands() {
     std::thread([]() {
+        std::cout << "[C++ Engine] Command listener thread started." << std::endl;
+
         std::string line;
         while (std::getline(std::cin, line)) {
+            if (line.empty()) continue; // Ignore empty lines
+
             std::stringstream ss(line);
             std::string command;
             ss >> command;
@@ -39,21 +46,22 @@ void listenToPythonCommands() {
             if (command == "DT") {
                 float newDt;
                 if (ss >> newDt) {
-                    simEngine.dt = newDt; // Modifies dt in real-time[cite: 3]
+                    simEngine.dt = newDt;
+                    std::cout << "[C++ Engine] Updated dt to: " << newDt << std::endl;
                 }
             }
             else if (command == "PAUSE") {
                 int pauseState;
                 if (ss >> pauseState) {
-                    // Update state if different
-                    if ((pauseState == 1) != simEngine.isPaused) {
-                        simEngine.togglePause(); // Toggles pause state live[cite: 3]
-                    }
+                    simEngine.isPaused = pauseState;
+                    std::cout << "[C++ Engine] Pause state set to: " << pauseState << std::endl;
                 }
             }
         }
-        }).detach(); // Detach thread so it runs independently
+        std::cout << "[C++ Engine] Stdin stream closed." << std::endl;
+        }).detach();
 }
+#pragma endregion
 
 #pragma region Main
 int main(int argc, char* argv[])
@@ -61,12 +69,18 @@ int main(int argc, char* argv[])
     // Default values if run directly from Visual Studio
     float timeStep = 0.05f;
     bool startPaused = false;
+    int winX = 100;
+    int winY = 500;
 
-    // Parse command line arguments from Python launcher
-    if (argc > 1) timeStep = static_cast<float>(std::atof(argv[1]));
-    if (argc > 2) startPaused = (std::atoi(argv[2]) == 1);
+    // Get arguments from python launcher (if there are none we aren't using python)
+    if (argc > 1) {
+        timeStep = static_cast<float>(std::atof(argv[1]));
+        startPaused = (std::atoi(argv[2]) == 1); 
+        winX = std::stoi(argv[3]);
+        winY = std::stoi(argv[4]);
 
-    listenToPythonCommands();
+        listenToPythonCommands();
+    }    
 
     // Create GL window and callbacks
     if (!glfwInit()) {
@@ -79,6 +93,8 @@ int main(int argc, char* argv[])
         glfwTerminate();
         return -1;
     }
+
+    glfwSetWindowPos(window, winX, winY);
 
     glfwMakeContextCurrent(window);
 
