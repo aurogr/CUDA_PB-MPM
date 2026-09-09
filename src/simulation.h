@@ -24,7 +24,7 @@ public:
     void initialize();
     void step(); 
     void free();
-    
+    void togglePause();
 
     // Getter methods for the renderer
     const SimulationParticles& getParticles() const { return ps; }

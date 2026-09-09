@@ -7,7 +7,7 @@
 struct WaterData {
     float* d_Jp = nullptr; // Deformation gradient determinant (volume change)
 
-    const float RELAXATION = 0.85f; // Between 1.0f (perfectly incompressible) and 0.0f
+    const float RELAXATION = 0.9f; // Between 1.0f (perfectly incompressible) and 0.0f
                                     // even though water is incompressible we need to trade off some of it for stability
 
     void allocate(int num_particles) {
@@ -25,6 +25,28 @@ struct WaterData {
         cudaFree(d_Jp);
     }
 };
+
+//struct ElasticData {
+//    Matrix2f* d_Fp = nullptr; // Deformation gradient
+//
+//    const float RELAXATION = 0.9f;
+//    const float ELASTICITY_RATIO = 0.9f;
+//
+//    void allocate(int num_particles) {
+//        cudaMalloc(&d_Fp, MAX_PARTICLES * sizeof(Matrix2f));
+//        std::vector<Matrix2f> h_Fp(num_particles, Matrix2f());
+//        cudaMemcpy(d_Fp, h_Fp.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+//    }
+//
+//    void addParticlesMidSimulation(int add_count, int offset) {
+//        std::vector<Matrix2f> h_Fp(add_count, Matrix2f());
+//        cudaMemcpy(d_Fp + offset, h_Fp.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+//    }
+//
+//    void free() {
+//        cudaFree(d_Fp);
+//    }
+//};
 
 template <typename MatData>
 class ParticleSystem {

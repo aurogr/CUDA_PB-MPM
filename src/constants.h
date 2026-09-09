@@ -29,7 +29,7 @@ const static float PHYSICS_DT = 0.05f;
 
 const static float GRAVITY = 9.81f;
 
-const static int SIM_SUBSTEPS = static_cast<int>(RENDER_DT / PHYSICS_DT); // Simulation substeps needed to control the render framerate
+const static int SIM_SUBSTEPS = std::max(1, static_cast<int>(RENDER_DT / PHYSICS_DT)); // Simulation substeps needed to control the render framerate
 
 const static int EMISSION_INTERVAL = SIM_SUBSTEPS; // Rate of particles addition (if = to SIM_SUBSTEPS it emits particles every rendered frame)
 

@@ -12,6 +12,8 @@ Simulation::~Simulation() {
     free();
 }
 
+void Simulation::togglePause() { isPaused = !isPaused; }
+
 void Simulation::initialize() {
     grid.initialize(X_GRID, Y_GRID);
 

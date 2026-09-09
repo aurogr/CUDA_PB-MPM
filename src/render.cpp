@@ -29,6 +29,7 @@ void GLRenderer::resizeViewport(int w, int h) {
     glLoadIdentity();
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 }
+
 void GLRenderer::render(const Simulation& sim) {
     glClear(GL_COLOR_BUFFER_BIT);
 

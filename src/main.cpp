@@ -31,10 +31,10 @@ cudaGraphicsResource_t particleCudaResource;
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     if (action == GLFW_PRESS) {
         if (key == GLFW_KEY_SPACE) {
-            pauseSimulation = !pauseSimulation; // Toggle play/pause
+            simEngine.togglePause();
         }
         if (key == GLFW_KEY_S) {
-            stepOnce = true; // Step exactly 1 frame forward
+            stepOnce = true;
         }
     }
 }
@@ -55,29 +55,29 @@ int main()
         return -1;
     }
 
+    glfwSetKeyCallback(window, key_callback);
+
     glfwMakeContextCurrent(window);
 
     // Instantiate decoupled physics and rendering engines
-    Simulation sim;
-    GLRenderer renderer;
 
-    sim.initialize();
-    renderer.initializeGL();
-    renderer.resizeViewport(X_WINDOW, Y_WINDOW);
+    simEngine.initialize();
+    renderEngine.initializeGL();
+    renderEngine.resizeViewport(X_WINDOW, Y_WINDOW);
 
     // Main render loop
     while (!glfwWindowShouldClose(window))
     {
-        sim.step();
-        renderer.render(sim);
+        simEngine.step();
+        renderEngine.render(simEngine);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
     // Cleanup
-    sim.free();
-    renderer.freeGL();
+    simEngine.free();
+    renderEngine.freeGL();
     glfwTerminate();
 
     return 0;
