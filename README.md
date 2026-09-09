@@ -1,27 +1,26 @@
 # CUDA PB-MPM
 Position Based Material Point Method solver from EA Siggraph 2024 paper done with CUDA.
 
-Phase 1.
+## Development roadmap
+### Phase 1. Explicit MPM
 The first phase of the project is understanding the logic behind MPM. For that, we have a CUDA solver and a simple visualizer with OpenGL.
 
-Phase 2. (current phase)
+### Phase 2. PB-MPM (current phase)
 We have left the pure explicit MPM solution on a branch, and moved to a PB-MPM CUDA solver, again with a simple visualizer with OpenGL.
 
-Instructions.
-A 'CMakeLists.txt' file is added to create the build and .exe on Visual Studio.
+### Phase 3. Vulkan visualizer (expected)
 
-The project can be launched from a Python wrapper that uses PySide6 to create a GUI and launch the .exe for easier modification of parameters.
+## Instructions.
+A `CMakeLists.txt` file is added to create the build and `.exe` on Visual Studio.
 
-Setup & Launch
-Install PySide6
+The project can be launched from a Python wrapper that uses PySide6 to create a GUI and launch the `.exe` for easier modification of parameters.
 
-You need Python installed on your computer. Install PySide6 in Visual Studio by running this command in the Developer PowerShell:
+**1. Install PySide6.** Install in Visual Studio by running this command in the Developer PowerShell: 
 
-PowerShell
-py -m pip install PySide6
-Run the GUI Application
+`py -m pip install PySide6`
 
-Open the Python application from the project PowerShell by running:
+*(you will need to have Python installed on your computer)*
 
-PowerShell
-py gui/launcher.py
+**2. Run the GUI App.** Open the Python application from the project PowerShell by running:
+
+`py gui/launcher.py`
