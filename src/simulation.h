@@ -13,12 +13,13 @@ private:
     SimulationParticles ps;
     CollisionManager collisionManager;
     int stepCount = 0;
+    int scene = 0;
 
 public:
     float dt = 0.05f;
-    bool isPaused = true;
+    bool isPaused = false;
     bool init_sphere = true;
-    bool add_mid_sim = false;
+    bool add_mid_sim = true;
     const float gravity = 9.81f;
     const int solver_iterations = 4;
 
@@ -26,6 +27,7 @@ public:
     //const static int EMISSION_INTERVAL = SIM_SUBSTEPS; // Rate of particles addition (if = to SIM_SUBSTEPS it emits particles every rendered frame)
 
     Simulation();
+    Simulation(int sceneType); // 0 = water, 1 = snow, 2 = both TODO: CHANGE FOR PREPARED SCENES
     ~Simulation();
 
     void initialize();

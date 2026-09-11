@@ -16,7 +16,7 @@
 #include "render.h"
 
 /* Globals */
-Simulation simEngine;
+Simulation simEngine(2);
 GLRenderer renderEngine;
 
 #pragma region OpenGL RT interaction (deprecated)

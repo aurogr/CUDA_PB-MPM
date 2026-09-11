@@ -67,7 +67,6 @@ void GLRenderer::renderParticles(const Vector2f* d_particles, int count) {
     glEnableClientState(GL_VERTEX_ARRAY);
     glVertexPointer(2, GL_FLOAT, 0, (void*)0);
 
-    glColor3f(0.2f, 0.6f, 1.0f);
     glEnable(GL_POINT_SMOOTH);
     glPointSize(3.0f);
     glDrawArrays(GL_POINTS, 0, count);

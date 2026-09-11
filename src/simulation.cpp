@@ -7,6 +7,10 @@
 Simulation::Simulation() {
 }
 
+Simulation::Simulation(int sceneType) {
+    scene = sceneType;
+}
+
 Simulation::~Simulation() {
     free();
 }
@@ -24,7 +28,7 @@ void Simulation::initialize() {
     collisionManager.addBox(Vector2f(X_GRID - wallThickness * 0.5f, Y_GRID * 0.5f), Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f), 0.0f, wall_friction);
     collisionManager.addBox(Vector2f(X_GRID * 0.5f, wallThickness * 0.5f), Vector2f(X_GRID * 0.5f, wallThickness * 0.5f), 0.0f, wall_friction);
     collisionManager.addBox(Vector2f(X_GRID * 0.5f, Y_GRID - wallThickness * 0.5f), Vector2f(X_GRID * 0.5f, wallThickness * 0.5f), 0.0f, wall_friction);
-    collisionManager.addSphere(Vector2f(20.0f, 15.0f), 10.0f, .3f);
+    collisionManager.addSphere(Vector2f(30.0f, 10.0f), 4.0f, .3f);
     collisionManager.copyToDevice();
 
     // Spawn an initial shape of water
@@ -56,10 +60,22 @@ void Simulation::initialize() {
         int particle_count = static_cast<int>(init_pos.size());
 
         // Pass the corrected values into your particle system initialization
-        ps.water.initialize(particle_count, init_pos, init_displacement);
+
+        if(scene == 0)
+            ps.water.initialize(particle_count, init_pos, init_displacement);
+        else if (scene == 1)
+            ps.snow.initialize(particle_count, init_pos, init_displacement);
+        else
+            ps.elastic.initialize(particle_count, init_pos, init_displacement);
     }
-    else
-        ps.water.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
+    else {
+        if (scene == 0)
+            ps.water.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
+        else if(scene == 1)
+            ps.snow.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
+        else
+            ps.elastic.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
+    }
 }
 
 void AddParticlesMidSim(SimulationParticles& ps, float dt) {
@@ -75,7 +91,7 @@ void AddParticlesMidSim(SimulationParticles& ps, float dt) {
         init_displacement.push_back(dt * init_vel);
     }
 
-    ps.water.addParticlesMidSimulation(init_pos, init_displacement);
+    ps.snow.addParticlesMidSimulation(init_pos, init_displacement);
 }
 
 void Simulation::step() {
