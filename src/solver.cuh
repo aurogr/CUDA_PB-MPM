@@ -11,15 +11,13 @@
 /// <summary>
 /// Solve material constraints for each particle
 /// </summary>
-template <typename MatData>
-void solveConstraints(const ParticleSystem<MatData>& ps);
+void solveConstraints(const ParticleSystem& ps);
 
 
 /// <summary>
 /// Particle to grid. Transfer particle mass, momentum, and force (computed using stresses) to grid nodes using interpolation functions.
 /// </summary>
-template <typename MatData>
-void p2g(const ParticleSystem<MatData>& ps, Grid& grid);
+void p2g(const ParticleSystem& ps, Grid& grid);
 
 /// <summary>
 /// Update nodal velocities via time integration while enforcing boundary conditions.
@@ -29,14 +27,12 @@ void updateGrid(Grid& grid, CollisionManagerDeviceData collisionData);
 /// <summary>
 /// Interpolate updated grid velocities back to particles.
 /// </summary>
-template <typename MatData>
-void g2p(ParticleSystem<MatData>& ps, const Grid& grid);
+void g2p(ParticleSystem& ps, const Grid& grid);
 
 /// <summary>
 /// Update each particle’s deformation gradient based on local velocity gradients and advect particle positions using updated velocities.
 /// </summary>
-template <typename MatData>
-void integrateParticle(ParticleSystem<MatData>& ps, const Grid& grid, float dt, float gravity, CollisionManagerDeviceData collisionData);
+void integrateParticle(ParticleSystem& ps, const Grid& grid, float dt, float gravity, CollisionManagerDeviceData collisionData);
 
 /// <summary>
 /// Init quadratic weights (grid step size is assumed to be 1.0)

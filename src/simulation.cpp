@@ -128,9 +128,6 @@ void Simulation::step() {
     if (ps.elastic.num_particles != 0) integrateParticle(ps.elastic, grid, dt, gravity, collisionManager.getDeviceData());
 }
 
-void Simulation::updateWaterParameters() {
-   
-}
 
 void Simulation::free() {
     ps.free();

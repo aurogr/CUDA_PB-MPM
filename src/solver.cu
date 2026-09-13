@@ -7,11 +7,11 @@
 
 
 #pragma region Material
-__device__ void computeDisplacement(const WaterData& mat, int p, Matrix2f& Dp) 
+__device__ void computeDisplacementWater(const MaterialSettings& settings, const float Jp, Matrix2f& Dp) 
 {
     //(1) Viscosity: remove deviatoric part of deformation displacement
     Matrix2f deviatoric = -1.0f * (Dp + Dp.transpose());
-    Dp += mat.viscosity * 0.5f * deviatoric;
+    Dp += settings.viscosity * 0.5f * deviatoric;
     
     //(2) Volume preservation (Incompressibility)
     
@@ -22,32 +22,32 @@ __device__ void computeDisplacement(const WaterData& mat, int p, Matrix2f& Dp)
     //1. det(F_new) = 1.0f;
     //2. det(F_new) = det(I + D_p) * det(F_old); where we can linearize the determinant as: det(I + D_p) = 1.0f + Tr(D_p) 
     
-    float alpha = 0.5f * (1.0f / mat.d_Jp[p] - Dp.trace() - 1.0f); // where the 0.5f comes from using an identity matrix in 2d space so the trace increases by 2*alpha
+    float alpha = 0.5f * (1.0f / Jp - Dp.trace() - 1.0f); // where the 0.5f comes from using an identity matrix in 2d space so the trace increases by 2*alpha
 
     // Finally, we add to the deformation displacement towards preserving the volume
-    Dp += mat.relaxation * alpha * identity();
+    Dp += settings.relaxation * alpha * identity();
 }
 
-__device__ void updateDeformation(const WaterData& mat, int p, Matrix2f Dp) {
+__device__ void updateDeformationWater(const MaterialSettings& settings, float& Jp, const Matrix2f Dp) {
     // Liquids hold no memory of shape, they only care about volume, so storing only the determinant of the deformation gradient is enough
 
     // The true update for volume is det(F_new) = det(I + Dp) * det(F_old)
     // but as before, we can use the trace instead of the complicated determinant
-    mat.d_Jp[p] *= (1.0f + Dp.trace());
-    mat.d_Jp[p] = fmaxf(mat.d_Jp[p], 0.1f); // Never allow J <= 0
+    Jp *= (1.0f + Dp.trace());
+    Jp = fmaxf(Jp, 0.1f); // Never allow J <= 0
 }
-__device__ void computeDisplacement(const SnowData& mat, int p, Matrix2f& Dp)
+__device__ void computeDisplacementSnow(const MaterialSettings& settings, const Matrix2f Fp, const Matrix2f Fe, Matrix2f& Dp)
 {
     // 1. Calculate exponential hardening from plastic volume change Jp
-    float Jp = mat.d_Fp[p].det();
-    float hardening = expf(mat.HARD_COEFF * (1.0f - Jp));
+    float Jp = Fp.det();
+    float hardening = expf(settings.hard_coeff * (1.0f - Jp));
     float reducedHardening = 1.0f + 0.1f * (hardening - 1.0f); // lerp baseline with 10% hardening force
-    float relaxation = fminf(mat.RELAXATION * reducedHardening, 0.4f);
+    float relaxation = fminf(settings.relaxation * reducedHardening, 0.4f);
 
     // 2. Rigid rotation extraction
     Matrix2f U, V;
     Vector2f Sigma;
-    mat.d_Fe[p].svd(&U, &Sigma, &V);
+    Fe.svd(&U, &Sigma, &V);
 
     if (U.det() < 0.0f) { U.m01 = -U.m01; U.m11 = -U.m11; }
     if (V.det() < 0.0f) { V.m01 = -V.m01; V.m11 = -V.m11; }
@@ -64,7 +64,7 @@ __device__ void computeDisplacement(const SnowData& mat, int p, Matrix2f& Dp)
     Dp -= 0.1f * D_dev;
 
     // 4. Volumetric displacement (Targeting Je = 1.0)
-    float Je = mat.d_Fe[p].det();
+    float Je = Fe.det();
     float alpha = 0.5f * (1.0f / fmaxf(Je, 1e-4f) - Dp.trace() - 1.0f);
     alpha = fminf(fmaxf(alpha, -2.0f), 2.0f); // Clamp extreme impulse
 
@@ -72,9 +72,9 @@ __device__ void computeDisplacement(const SnowData& mat, int p, Matrix2f& Dp)
     Dp += relaxation * (D_shear + alpha * identity());
 }
 
-__device__ void updateDeformation(const SnowData& mat, int p, Matrix2f Dp) {
+__device__ void updateDeformationSnow(const MaterialSettings& settings, Matrix2f& Fp, Matrix2f& Fe, const Matrix2f Dp) {
     // 1. Trial elastic deformation gradient
-    Matrix2f Fe_trial = (identity() + Dp) * mat.d_Fe[p];
+    Matrix2f Fe_trial = (identity() + Dp) * Fe;
 
     // 2. SVD to check yield condition
     Matrix2f U, V;
@@ -82,10 +82,10 @@ __device__ void updateDeformation(const SnowData& mat, int p, Matrix2f Dp) {
     Fe_trial.svd(&U, &Sigma, &V); 
 
     // 3. Clamp plasticity values
-    Vector2f elasticSigma = Sigma.clamp(1.0f - mat.CRIT_COMPRESSION, 1.0f + mat.CRIT_STRETCH);
+    Vector2f elasticSigma = Sigma.clamp(1.0f - settings.crit_compression, 1.0f + settings.crit_stretch);
 
     // 4. Update elastic deformation Fe
-    mat.d_Fe[p] = U.diag_product(elasticSigma) * V.transpose();
+    Fe = U.diag_product(elasticSigma) * V.transpose();
 
     // 5. Update plastic deformation Fp
     Vector2f plasticRatio(
@@ -93,7 +93,7 @@ __device__ void updateDeformation(const SnowData& mat, int p, Matrix2f Dp) {
         Sigma.y / fmaxf(elasticSigma.y, 1e-8f)
     );
     Matrix2f Fp_yield = V.diag_product(plasticRatio) * V.transpose(); 
-    Matrix2f Fp_new = Fp_yield * mat.d_Fp[p];
+    Matrix2f Fp_new = Fp_yield * Fp;
 
     // 6. Plastic volume limit
     float Jp_new = Fp_new.det();
@@ -103,13 +103,11 @@ __device__ void updateDeformation(const SnowData& mat, int p, Matrix2f Dp) {
         Fp_new *= scale;
     }
 
-    mat.d_Fp[p] = Fp_new;
+    Fp = Fp_new;
 }
 
-__device__ void computeDisplacement(const ElasticData& mat, int p, Matrix2f& Dp)
+__device__ void computeDisplacementElastic(const MaterialSettings& settings, const Matrix2f Fe, Matrix2f& Dp)
 {
-    Matrix2f Fe = mat.d_Fe[p];
-
     // 1. Compute trial deformation gradient F_trial = (I + Dp) * Fe
     Matrix2f F_trial = (identity() + Dp) * Fe;
 
@@ -126,7 +124,7 @@ __device__ void computeDisplacement(const ElasticData& mat, int p, Matrix2f& Dp)
     Matrix2f A_vol = (1.0f / (sign_df * sqrtf(cdf))) * F_trial;
 
     // 4. Blend shape restoration and volume retention
-    float alpha = mat.ELASTICITY_RATIO; // Ratio between shape (1.0) and volume (0.0)
+    float alpha = settings.elasticity_ratio; // Ratio between shape (1.0) and volume (0.0)
     Matrix2f A_tgt = alpha * A_shape + (1.0f - alpha) * A_vol;
 
     // 5. Safe inverse of Fe using SVD decomposition to prevent NaN on collapsed particles
@@ -138,13 +136,13 @@ __device__ void computeDisplacement(const ElasticData& mat, int p, Matrix2f& Dp)
 
     // 6. Convert target deformation back to displacement step
     Matrix2f target_D = A_tgt * Fe_inv - identity();
-    Dp += mat.RELAXATION * (target_D - Dp);
+    Dp += settings.relaxation * (target_D - Dp);
 }
 
-__device__ void updateDeformation(const ElasticData& mat, int p, Matrix2f Dp)
+__device__ void updateDeformationElastic(const MaterialSettings& mat, Matrix2f& Fe, const Matrix2f Dp)
 {
     // 1. Advance deformation gradient
-    Matrix2f Fe_new = (identity() + Dp) * mat.d_Fe[p];
+    Matrix2f Fe_new = (identity() + Dp) * Fe;
 
     // // 2. Per-axis singular value clamping (prevents individual axis collapse)
     Matrix2f U, V;
@@ -157,7 +155,7 @@ __device__ void updateDeformation(const ElasticData& mat, int p, Matrix2f Dp)
     Matrix2f Sigma_diag = { Sigma.x, 0.0f, 0.0f, Sigma.y };
     Fe_new = U * Sigma_diag * V.transpose();
 
-    mat.d_Fe[p] = Fe_new;
+    Fe = Fe_new;
 }
 #pragma endregion
 
@@ -279,13 +277,22 @@ __device__ void pushOutOfCollider(Vector2f& Xp, Vector2f&Xp_delta, CollisionMana
 #pragma endregion
 
 #pragma region Solver
-template <typename MatData>
-__global__ void solveConstraints_kernel(MatData d_mat, Matrix2f* d_Dp, const int num_particles)
+__global__ void solveConstraints_kernel(MaterialType d_mat, MaterialSettings d_settings, float* d_Jp, Matrix2f* d_Fp, Matrix2f* d_Fe, Matrix2f* d_Dp, const int num_particles)
 {
     int p = blockIdx.x * blockDim.x + threadIdx.x;
     if (p >= num_particles) return;
 
-    computeDisplacement(d_mat, p, d_Dp[p]);
+    switch (d_mat) {
+    case MaterialType::WATER:
+        computeDisplacementWater(d_settings, d_Jp[p], d_Dp[p]);
+        break;
+    case MaterialType::SNOW:
+        computeDisplacementSnow(d_settings, d_Fp[p], d_Fe[p], d_Dp[p]);
+        break;
+    case MaterialType::ELASTIC:
+        computeDisplacementElastic(d_settings, d_Fe[p], d_Dp[p]);
+        break;
+    }
 }
 
 
@@ -396,8 +403,8 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, Matrix2f* d_Dp,
     d_Xp_delta[p] = Xp_delta;
 }
 
-template <typename MatData>
-__global__ void integrateParticle_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, Matrix2f* d_Dp, MatData d_mat,
+__global__ void integrateParticle_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, Matrix2f* d_Dp, 
+    MaterialType mat, MaterialSettings settings, float* d_Jp, Matrix2f* d_Fp, Matrix2f* d_Fe,
     const int num_particles, const int gridX, const int gridY, const float dt, const float G, CollisionManagerDeviceData collisionData)
 {
     // 1. Get particle (thread per particle) and its characteristics
@@ -420,24 +427,32 @@ __global__ void integrateParticle_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, M
     d_Xp[p].y = fminf(fmaxf(d_Xp[p].y, 1.5f), (float)gridY - 1.5f);
 
     // 6. Update deformation
-    updateDeformation(d_mat, p, d_Dp[p]);
+    switch (mat) {
+        case MaterialType::WATER:
+            updateDeformationWater(settings, d_Jp[p], d_Dp[p]);
+            break;
+        case MaterialType::SNOW:
+            updateDeformationSnow(settings, d_Fp[p], d_Fe[p], d_Dp[p]);
+            break;
+        case MaterialType::ELASTIC:
+            updateDeformationElastic(settings, d_Fe[p], d_Dp[p]);
+            break;
+    }
 }
 
 #pragma endregion
 
 #pragma region Host Solver Implementation
 
-template <typename MatData>
-void solveConstraints(const ParticleSystem<MatData>& ps)
+void solveConstraints(const ParticleSystem& ps)
 {
     int blockSize = 256;
     int gridSize = (ps.num_particles + blockSize - 1) / blockSize;
     solveConstraints_kernel <<<gridSize, blockSize >>>
-        (ps.d_Mat, ps.d_Dp, ps.num_particles);
+        (ps.type, ps.settings, ps.d_Jp, ps.d_Fp, ps.d_Fe, ps.d_Dp, ps.num_particles);
 }
 
-template <typename MatData>
-void p2g(const ParticleSystem<MatData>& ps, Grid& grid)
+void p2g(const ParticleSystem& ps, Grid& grid)
 {
     int blockSize = 256;
     int gridSize = (ps.num_particles + blockSize - 1) / blockSize;
@@ -456,8 +471,7 @@ void updateGrid(Grid& grid, CollisionManagerDeviceData collisionData)
         (grid.d_Mi, grid.d_Di, grid.num_nodes, grid.grid_x, grid.grid_y, collisionData);
 }
 
-template <typename MatData>
-void g2p(ParticleSystem<MatData>& ps, const Grid& grid)
+void g2p(ParticleSystem& ps, const Grid& grid)
 {
     int blockSize = 256;
     int gridSize = (ps.num_particles + blockSize - 1) / blockSize;
@@ -467,35 +481,16 @@ void g2p(ParticleSystem<MatData>& ps, const Grid& grid)
         grid.d_Di, grid.grid_x, grid.grid_y);
 }
 
-template <typename MatData>
-void integrateParticle(ParticleSystem<MatData>& ps, const Grid& grid, float dt, float gravity, CollisionManagerDeviceData collisionData)
+void integrateParticle(ParticleSystem& ps, const Grid& grid, float dt, float gravity, CollisionManagerDeviceData collisionData)
 {
     if (ps.num_particles == 0) return;
     int blockSize = 256;
     int gridSize = (ps.num_particles + blockSize - 1) / blockSize;
 
     integrateParticle_kernel << <gridSize, blockSize >> >
-        (ps.d_Xp, ps.d_Xp_delta, ps.d_Dp, ps.d_Mat, ps.num_particles,
+        (ps.d_Xp, ps.d_Xp_delta, ps.d_Dp,
+         ps.type, ps.settings, ps.d_Jp, ps.d_Fp, ps.d_Fe, ps.num_particles,
         grid.grid_x, grid.grid_y, dt, gravity, collisionData);
 }
-
-#pragma endregion
-
-#pragma region Explicit instantiation
-template void solveConstraints<WaterData>(const ParticleSystem<WaterData>& ps);
-template void solveConstraints<SnowData>(const ParticleSystem<SnowData>& ps);
-template void solveConstraints<ElasticData>(const ParticleSystem<ElasticData>& ps);
-
-template void p2g<WaterData>(const ParticleSystem<WaterData>& ps, Grid& grid);
-template void p2g<SnowData>(const ParticleSystem<SnowData>& ps, Grid& grid);
-template void p2g<ElasticData>(const ParticleSystem<ElasticData>& ps, Grid& grid);
-
-template void g2p<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid);
-template void g2p<SnowData>(ParticleSystem<SnowData>& ps, const Grid& grid);
-template void g2p<ElasticData>(ParticleSystem<ElasticData>& ps, const Grid& grid);
-
-template void integrateParticle<WaterData>(ParticleSystem<WaterData>& ps, const Grid& grid, float dt, float gravity, CollisionManagerDeviceData collisionData);
-template void integrateParticle<SnowData>(ParticleSystem<SnowData>& ps, const Grid& grid, float dt, float gravity, CollisionManagerDeviceData collisionData);
-template void integrateParticle<ElasticData>(ParticleSystem<ElasticData>& ps, const Grid& grid, float dt, float gravity, CollisionManagerDeviceData collisionData);
 
 #pragma endregion

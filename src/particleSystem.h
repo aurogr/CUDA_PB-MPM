@@ -4,95 +4,53 @@
 #include "types.h"
 #include <vector>
 
-struct WaterData {
-    float* d_Jp = nullptr; // Deformation gradient determinant (volume change)
+enum class MaterialType {
+    WATER,
+    SNOW,
+    ELASTIC
+};
 
-    // Simulation parameters
-    float relaxation = 0.9f; // Between 1.0f (perfectly incompressible) and 0.0f
+struct MaterialSettings {
+    // Shared / General
+    float relaxation = 0.9f;
+    float stiffness = 0.15f;
+
+    // Water specific
     float viscosity = 0.0f;
 
-    void allocate(int num_particles) {
-        cudaMalloc(&d_Jp, MAX_PARTICLES * sizeof(float));
-        std::vector<float> h_Jp(num_particles, 1.0f);
-        cudaMemcpy(d_Jp, h_Jp.data(), num_particles * sizeof(float), cudaMemcpyHostToDevice);
-    }
+    // Snow specific
+    float crit_compression = 0.025f;
+    float crit_stretch = 0.0075f;
+    float hard_coeff = 1.0f;
 
-    void addParticlesMidSimulation(int add_count, int offset) {
-        std::vector<float> h_Jp(add_count, 1.0f);
-        cudaMemcpy(d_Jp + offset, h_Jp.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
-    }
-
-    void free() {
-        cudaFree(d_Jp);
-    }
+    // Elastic specific
+    float elasticity_ratio = 0.9f;
 };
 
-struct SnowData {
-    Matrix2f* d_Fe = nullptr; // Elastic deformation gradient
-    Matrix2f* d_Fp = nullptr; // Plastic deformation gradient
-
-    const float CRIT_COMPRESSION = 0.025f; 
-    const float CRIT_STRETCH = 0.0075f; 
-    const float HARD_COEFF = 1.0f; 
-    const float STIFFNESS = 0.15f; 
-    const float RELAXATION = 0.9f;
-
-    void allocate(int num_particles) {
-        cudaMalloc(&d_Fp, MAX_PARTICLES * sizeof(Matrix2f));
-        cudaMalloc(&d_Fe, MAX_PARTICLES * sizeof(Matrix2f));
-        std::vector<Matrix2f> h_F(num_particles, identity());
-        cudaMemcpy(d_Fp, h_F.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_Fe, h_F.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-    }
-
-    void addParticlesMidSimulation(int add_count, int offset) {
-        std::vector<Matrix2f> h_F(add_count, identity());
-        cudaMemcpy(d_Fp + offset, h_F.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_Fe + offset, h_F.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-    }
-
-    void free() {
-        cudaFree(d_Fp);
-        cudaFree(d_Fe);
-    }
-};
-
-struct ElasticData {
-    Matrix2f* d_Fe = nullptr; // Deformation gradient
-
-    const float RELAXATION = 0.9f;
-    const float ELASTICITY_RATIO = 0.9f;
-
-    void allocate(int num_particles) {
-        cudaMalloc(&d_Fe, MAX_PARTICLES * sizeof(Matrix2f));
-        std::vector<Matrix2f> h_Fe(num_particles, identity());
-        cudaMemcpy(d_Fe, h_Fe.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-    }
-
-    void addParticlesMidSimulation(int add_count, int offset) {
-        std::vector<Matrix2f> h_Fp(add_count, identity());
-        cudaMemcpy(d_Fe + offset, h_Fp.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-    }
-
-    void free() {
-        cudaFree(d_Fe);
-    }
-};
-
-template <typename MatData>
 class ParticleSystem {
 public:
     int num_particles = 0;
+    MaterialType type;
 
-    // --- GPU Device Pointers ---
-    float* d_Mp = nullptr; // Particle mass (constant)
+    // --- UI Editable Settings ---
+    MaterialSettings settings;
 
-    Vector2f* d_Xp = nullptr; // Particle position
-    Vector2f* d_Xp_delta = nullptr; // Particle position displacement
-    Matrix2f* d_Dp = nullptr; // Particle deformation displacement
+    // --- Common GPU Pointers ---
+    float* d_Mp = nullptr;
+    Vector2f* d_Xp = nullptr;
+    Vector2f* d_Xp_delta = nullptr;
+    Matrix2f* d_Dp = nullptr;
 
-    // Material specific data is templated inside different structs
-    MatData d_Mat;
+    // --- Material-Specific GPU Pointers ---
+    float* d_Jp = nullptr;       // Water
+    Matrix2f* d_Fe = nullptr;    // Snow & Elastic
+    Matrix2f* d_Fp = nullptr;    // Snow
+
+    ParticleSystem(){}
+
+    ~ParticleSystem() {
+        free();
+    }
 
     void initialize(int count, const std::vector<Vector2f>& h_Xp, const std::vector<Vector2f>& h_Xp_delta) {
         num_particles = count;
@@ -101,6 +59,19 @@ public:
         cudaMalloc(&d_Xp, MAX_PARTICLES * sizeof(Vector2f));
         cudaMalloc(&d_Xp_delta, MAX_PARTICLES * sizeof(Vector2f));
         cudaMalloc(&d_Dp, MAX_PARTICLES * sizeof(Matrix2f));
+
+        switch (type) {
+        case MaterialType::WATER:
+            cudaMalloc(&d_Jp, MAX_PARTICLES * sizeof(float));
+            break;
+        case MaterialType::SNOW:
+            cudaMalloc(&d_Fp, MAX_PARTICLES * sizeof(Matrix2f));
+            cudaMalloc(&d_Fe, MAX_PARTICLES * sizeof(Matrix2f));
+            break;
+        case MaterialType::ELASTIC:
+            cudaMalloc(&d_Fe, MAX_PARTICLES * sizeof(Matrix2f));
+            break;
+        }
 
         if (num_particles > 0) {
 
@@ -111,9 +82,26 @@ public:
             cudaMemcpy(d_Xp, h_Xp.data(), num_particles * sizeof(Vector2f), cudaMemcpyHostToDevice);
             cudaMemcpy(d_Xp_delta, h_Xp_delta.data(), num_particles * sizeof(Vector2f), cudaMemcpyHostToDevice);
             cudaMemcpy(d_Dp, h_Dp.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-        }
 
-        d_Mat.allocate(num_particles);
+            switch (type) {
+                case MaterialType::WATER: {
+                    std::vector<float> h_Jp(num_particles, 1.0f);
+                    cudaMemcpy(d_Jp, h_Jp.data(), num_particles * sizeof(float), cudaMemcpyHostToDevice);
+                    break;
+                }
+                case MaterialType::SNOW: {
+                    std::vector<Matrix2f> h_F(num_particles, identity());
+                    cudaMemcpy(d_Fp, h_F.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+                    cudaMemcpy(d_Fe, h_F.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+                    break;
+                }
+                case MaterialType::ELASTIC: {
+                    std::vector<Matrix2f> h_Fe(num_particles, identity());
+                    cudaMemcpy(d_Fe, h_Fe.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+                    break;
+                }
+            }
+        }
     }
 
     void addParticlesMidSimulation(const std::vector<Vector2f>& new_pos, const std::vector<Vector2f>& new_displacement) {
@@ -141,7 +129,24 @@ public:
         // Update count
         num_particles += add_count;
 
-        d_Mat.addParticlesMidSimulation(add_count, offset);
+        switch (type) {
+        case MaterialType::WATER: {
+            std::vector<float> h_Jp(add_count, 1.0f);
+            cudaMemcpy(d_Jp + offset, h_Jp.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
+            break;
+        }
+        case MaterialType::SNOW: {
+            std::vector<Matrix2f> h_F(add_count, identity());
+            cudaMemcpy(d_Fp + offset, h_F.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_Fe + offset, h_F.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+            break;
+        }
+        case MaterialType::ELASTIC: {
+            std::vector<Matrix2f> h_Fe(add_count, identity());
+            cudaMemcpy(d_Fe + offset, h_Fe.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+            break;
+        }
+        }
     }
 
     void free() {
@@ -149,16 +154,17 @@ public:
         cudaFree(d_Xp);  
         cudaFree(d_Xp_delta); 
         cudaFree(d_Dp);
-
-        d_Mat.free();
+        cudaFree(d_Jp);
+        cudaFree(d_Fp);
+        cudaFree(d_Fe);
     }
 };
 
 struct SimulationParticles
 {
-    ParticleSystem<WaterData> water;
-    ParticleSystem<SnowData> snow; // TODO: CHANGE
-    ParticleSystem<ElasticData> elastic; // TODO: CHANGE
+    ParticleSystem water;
+    ParticleSystem snow;
+    ParticleSystem elastic;
 
     int inline getParticlesCount() {
         return water.num_particles + snow.num_particles + elastic.num_particles;
