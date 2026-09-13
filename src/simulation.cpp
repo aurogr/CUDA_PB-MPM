@@ -7,10 +7,6 @@
 Simulation::Simulation() {
 }
 
-Simulation::Simulation(int sceneType) {
-    scene = sceneType;
-}
-
 Simulation::~Simulation() {
     free();
 }
@@ -37,7 +33,7 @@ void Simulation::initialize() {
 
     Vector2f init_vel(0.0f, 0.0f);
 
-    if (init_sphere) {
+    if (initSphere) {
 
         init_pos.reserve(MAX_PARTICLES);
         init_displacement.reserve(MAX_PARTICLES);
@@ -61,29 +57,29 @@ void Simulation::initialize() {
 
         // Pass the corrected values into your particle system initialization
 
-        if(scene == 0)
+        if(materialType == 0)
             ps.water.initialize(particle_count, init_pos, init_displacement);
-        else if (scene == 1)
+        else if (materialType == 1)
             ps.snow.initialize(particle_count, init_pos, init_displacement);
         else
             ps.elastic.initialize(particle_count, init_pos, init_displacement);
     }
     else {
-        if (scene == 0)
+        if (materialType == 0)
             ps.water.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
-        else if(scene == 1)
+        else if(materialType == 1)
             ps.snow.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
         else
             ps.elastic.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
     }
 }
 
-void AddParticlesMidSim(SimulationParticles& ps, float dt) {
+void AddParticlesMidSim(SimulationParticles& ps, float dt, int materialType) {
     // Add water particles mid sim
     std::vector<Vector2f> init_pos;
     std::vector<Vector2f> init_displacement;
 
-    Vector2f init_vel(10.0f, 0.0f);
+    Vector2f init_vel(100.0f, 0.0f);
 
     for (int p = 0; p < 8; ++p) {
         float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
@@ -91,19 +87,24 @@ void AddParticlesMidSim(SimulationParticles& ps, float dt) {
         init_displacement.push_back(dt * init_vel);
     }
 
-    ps.snow.addParticlesMidSimulation(init_pos, init_displacement);
+    if (materialType == 0)
+        ps.water.addParticlesMidSimulation(init_pos, init_displacement);
+    else if (materialType == 1)
+        ps.snow.addParticlesMidSimulation(init_pos, init_displacement);
+    else
+        ps.elastic.addParticlesMidSimulation(init_pos, init_displacement);
 }
 
 void Simulation::step() {
-    if (isPaused || (ps.getParticlesCount() == 0 && !add_mid_sim)) return;
+    if (isPaused || (ps.getParticlesCount() == 0 && !addMidSim)) return;
 
     stepCount++;
 
-    if (ps.getParticlesCount() < MAX_PARTICLES /*&& stepCount % EMISSION_INTERVAL == 0*/ && add_mid_sim) {
-        AddParticlesMidSim(ps, dt);
+    if (ps.getParticlesCount() < MAX_PARTICLES /*&& stepCount % EMISSION_INTERVAL == 0*/ && addMidSim) {
+        AddParticlesMidSim(ps, dt, materialType);
     }
 
-    for (int i = 0; i < solver_iterations; i++) {
+    for (int i = 0; i < solverIterations; i++) {
 
         if (ps.water.num_particles != 0) solveConstraints(ps.water);
         if (ps.snow.num_particles != 0) solveConstraints(ps.snow);
@@ -125,6 +126,10 @@ void Simulation::step() {
     if (ps.water.num_particles != 0) integrateParticle(ps.water, grid, dt, gravity, collisionManager.getDeviceData());
     if (ps.snow.num_particles != 0) integrateParticle(ps.snow, grid, dt, gravity, collisionManager.getDeviceData());
     if (ps.elastic.num_particles != 0) integrateParticle(ps.elastic, grid, dt, gravity, collisionManager.getDeviceData());
+}
+
+void Simulation::updateWaterParameters() {
+   
 }
 
 void Simulation::free() {

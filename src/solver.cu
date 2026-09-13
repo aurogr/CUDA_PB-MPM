@@ -9,7 +9,9 @@
 #pragma region Material
 __device__ void computeDisplacement(const WaterData& mat, int p, Matrix2f& Dp) 
 {
-    //(1) If we wanted liquids with some viscosity we would need to add a step, for now we only have water
+    //(1) Viscosity: remove deviatoric part of deformation displacement
+    Matrix2f deviatoric = -1.0f * (Dp + Dp.transpose());
+    Dp += mat.viscosity * 0.5f * deviatoric;
     
     //(2) Volume preservation (Incompressibility)
     
@@ -23,7 +25,7 @@ __device__ void computeDisplacement(const WaterData& mat, int p, Matrix2f& Dp)
     float alpha = 0.5f * (1.0f / mat.d_Jp[p] - Dp.trace() - 1.0f); // where the 0.5f comes from using an identity matrix in 2d space so the trace increases by 2*alpha
 
     // Finally, we add to the deformation displacement towards preserving the volume
-    Dp += mat.RELAXATION * alpha * identity();
+    Dp += mat.relaxation * alpha * identity();
 }
 
 __device__ void updateDeformation(const WaterData& mat, int p, Matrix2f Dp) {
@@ -39,21 +41,34 @@ __device__ void computeDisplacement(const SnowData& mat, int p, Matrix2f& Dp)
     // 1. Calculate exponential hardening from plastic volume change Jp
     float Jp = mat.d_Fp[p].det();
     float hardening = expf(mat.HARD_COEFF * (1.0f - Jp));
-    float relaxation = fminf(mat.RELAXATION * hardening, 0.95f);
+    float reducedHardening = 1.0f + 0.1f * (hardening - 1.0f); // lerp baseline with 10% hardening force
+    float relaxation = fminf(mat.RELAXATION * reducedHardening, 0.4f);
 
     // 2. Rigid rotation extraction
     Matrix2f U, V;
     Vector2f Sigma;
     mat.d_Fe[p].svd(&U, &Sigma, &V);
 
-    Matrix2f Re = U * V.transpose();
-    Matrix2f D_shear = Re * mat.d_Fe[p].inverse() - identity();
+    if (U.det() < 0.0f) { U.m01 = -U.m01; U.m11 = -U.m11; }
+    if (V.det() < 0.0f) { V.m01 = -V.m01; V.m11 = -V.m11; }
 
-    // 3. WATER VOLUME MATH (Targeting Je = 1.0 instead of J = 1.0)
+    // Safe inverse for SVD
+    Vector2f invSigma(1.0f / fmaxf(Sigma.x, 1e-5f), 1.0f / fmaxf(Sigma.y, 1e-5f));
+    Matrix2f Fe_inv = V * Matrix2f(invSigma.x, 0.0f, 0.0f, invSigma.y) * U.transpose();
+
+    Matrix2f Re = U * V.transpose();
+    Matrix2f D_shear = Re * Fe_inv - identity();
+
+    // 3. Deviatoric shear damping
+    Matrix2f D_dev = Dp - 0.5f * Dp.trace() * identity();
+    Dp -= 0.1f * D_dev;
+
+    // 4. Volumetric displacement (Targeting Je = 1.0)
     float Je = mat.d_Fe[p].det();
     float alpha = 0.5f * (1.0f / fmaxf(Je, 1e-4f) - Dp.trace() - 1.0f);
+    alpha = fminf(fmaxf(alpha, -2.0f), 2.0f); // Clamp extreme impulse
 
-    // 4. Combine shape displacement and trace-based volume correction
+    // 5. Combine displacement corrections
     Dp += relaxation * (D_shear + alpha * identity());
 }
 
@@ -64,7 +79,7 @@ __device__ void updateDeformation(const SnowData& mat, int p, Matrix2f Dp) {
     // 2. SVD to check yield condition
     Matrix2f U, V;
     Vector2f Sigma;
-    Fe_trial.svd(&U, &Sigma, &V);
+    Fe_trial.svd(&U, &Sigma, &V); 
 
     // 3. Clamp plasticity values
     Vector2f elasticSigma = Sigma.clamp(1.0f - mat.CRIT_COMPRESSION, 1.0f + mat.CRIT_STRETCH);
@@ -77,8 +92,18 @@ __device__ void updateDeformation(const SnowData& mat, int p, Matrix2f Dp) {
         Sigma.x / fmaxf(elasticSigma.x, 1e-8f),
         Sigma.y / fmaxf(elasticSigma.y, 1e-8f)
     );
-    Matrix2f Fp_yield = V.diag_product(plasticRatio) * V.transpose();
-    mat.d_Fp[p] = Fp_yield * mat.d_Fp[p];
+    Matrix2f Fp_yield = V.diag_product(plasticRatio) * V.transpose(); 
+    Matrix2f Fp_new = Fp_yield * mat.d_Fp[p];
+
+    // 6. Plastic volume limit
+    float Jp_new = Fp_new.det();
+    const float min_Jp = 0.5f;
+    if (Jp_new < min_Jp) {
+        float scale = powf(min_Jp / fmaxf(Jp_new, 1e-6f), 0.15f);
+        Fp_new *= scale;
+    }
+
+    mat.d_Fp[p] = Fp_new;
 }
 
 __device__ void computeDisplacement(const ElasticData& mat, int p, Matrix2f& Dp)
@@ -104,40 +129,36 @@ __device__ void computeDisplacement(const ElasticData& mat, int p, Matrix2f& Dp)
     float alpha = mat.ELASTICITY_RATIO; // Ratio between shape (1.0) and volume (0.0)
     Matrix2f A_tgt = alpha * A_shape + (1.0f - alpha) * A_vol;
 
-    // 5. Convert blended target back to displacement space and apply relaxation
-    Matrix2f target_D = A_tgt * Fe.inverse() - identity();
+    // 5. Safe inverse of Fe using SVD decomposition to prevent NaN on collapsed particles
+    Matrix2f Fe_U, Fe_V;
+    Vector2f Fe_Sigma;
+    Fe.svd(&Fe_U, &Fe_Sigma, &Fe_V);
+    Vector2f invFeSigma(1.0f / fmaxf(Fe_Sigma.x, 1e-5f), 1.0f / fmaxf(Fe_Sigma.y, 1e-5f));
+    Matrix2f Fe_inv = Fe_V * Matrix2f(invFeSigma.x, 0.0f, 0.0f, invFeSigma.y) * Fe_U.transpose();
 
-    float relaxation = mat.RELAXATION; // Damping factor (e.g., 0.2f - 0.5f)
-    Dp += relaxation * (target_D - Dp);
+    // 6. Convert target deformation back to displacement step
+    Matrix2f target_D = A_tgt * Fe_inv - identity();
+    Dp += mat.RELAXATION * (target_D - Dp);
 }
 
 __device__ void updateDeformation(const ElasticData& mat, int p, Matrix2f Dp)
 {
-    // 1. Advance deformation gradient using the relaxed displacement Dp
+    // 1. Advance deformation gradient
     Matrix2f Fe_new = (identity() + Dp) * mat.d_Fe[p];
 
-    // 2. Numerical Inversion Guard: Prevent Fe from collapsing into a negative/zero determinant
-    float detF = Fe_new.det();
-    if (detF < 1e-4f)
-    {
-        Matrix2f U, V;
-        Vector2f Sigma;
-        Fe_new.svd(&U, &Sigma, &V);
+    // // 2. Per-axis singular value clamping (prevents individual axis collapse)
+    Matrix2f U, V;
+    Vector2f Sigma;
+    Fe_new.svd(&U, &Sigma, &V);
 
-        // Floor singular values to prevent matrix degeneracy
-        Sigma.x = fmaxf(Sigma.x, 1e-2f);
-        Sigma.y = fmaxf(Sigma.y, 1e-2f);
+    Sigma.x = fmaxf(Sigma.x, 1e-2f);
+    Sigma.y = fmaxf(Sigma.y, 1e-2f);
 
-        Matrix2f Sigma_diag = { Sigma.x, 0.0f, 0.0f, Sigma.y };
-        Fe_new = U * Sigma_diag * V.transpose();
-    }
+    Matrix2f Sigma_diag = { Sigma.x, 0.0f, 0.0f, Sigma.y };
+    Fe_new = U * Sigma_diag * V.transpose();
 
-    // 3. Store updated elastic deformation gradient
     mat.d_Fe[p] = Fe_new;
 }
-
-
-
 #pragma endregion
 
 #pragma region Collisions
@@ -249,7 +270,7 @@ __device__ void pushOutOfCollider(Vector2f& Xp, Vector2f&Xp_delta, CollisionMana
                 Xp_delta -= n * vn;
 
                 // (Optional) Apply simple friction to tangential velocity
-                // Xp_delta *= 0.95f;
+                Xp_delta *= 0.95f;
             }
         }
     }
@@ -387,7 +408,8 @@ __global__ void integrateParticle_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, M
     d_Xp[p] += d_Xp_delta[p];
 
     // 3. Explicit external forces displacement (x = at^2)
-    d_Xp_delta[p].y -= G * dt * dt;
+    float gravityDisplacement = (float)gridY * G * dt * dt;
+    d_Xp_delta[p].y -= gravityDisplacement;
 
     // 4. Check again against colliders to push position out of them if it is inside
     pushOutOfCollider(d_Xp[p], d_Xp_delta[p], collisionData);

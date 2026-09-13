@@ -13,27 +13,25 @@ private:
     SimulationParticles ps;
     CollisionManager collisionManager;
     int stepCount = 0;
-    int scene = 0;
 
 public:
-    float dt = 0.05f;
+    float dt = 0.001f;
     bool isPaused = false;
-    bool init_sphere = true;
-    bool add_mid_sim = true;
+    bool initSphere = true;
+    bool addMidSim = true;
     const float gravity = 9.81f;
-    const int solver_iterations = 4;
+    const int solverIterations = 4;
 
-    //const static int SIM_SUBSTEPS = std::max(1, static_cast<int>(RENDER_DT / PHYSICS_DT)); // Simulation substeps needed to control the render framerate
-    //const static int EMISSION_INTERVAL = SIM_SUBSTEPS; // Rate of particles addition (if = to SIM_SUBSTEPS it emits particles every rendered frame)
+    int materialType = 0; // 0 = water, 1 = snow, 2 = elastic, 3 = both TODO: CHANGE FOR PREPARED SCENES
 
     Simulation();
-    Simulation(int sceneType); // 0 = water, 1 = snow, 2 = both TODO: CHANGE FOR PREPARED SCENES
     ~Simulation();
 
     void initialize();
     void step(); 
     void free();
     void togglePause();
+    void updateWaterParameters();
 
     // Getter methods for the renderer
     const SimulationParticles& getParticles() const { return ps; }

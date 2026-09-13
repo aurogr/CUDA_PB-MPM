@@ -7,8 +7,9 @@
 struct WaterData {
     float* d_Jp = nullptr; // Deformation gradient determinant (volume change)
 
-    const float RELAXATION = 0.9f; // Between 1.0f (perfectly incompressible) and 0.0f
-                                    // even though water is incompressible we need to trade off some of it for stability
+    // Simulation parameters
+    float relaxation = 0.9f; // Between 1.0f (perfectly incompressible) and 0.0f
+    float viscosity = 0.0f;
 
     void allocate(int num_particles) {
         cudaMalloc(&d_Jp, MAX_PARTICLES * sizeof(float));

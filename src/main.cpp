@@ -16,7 +16,7 @@
 #include "render.h"
 
 /* Globals */
-Simulation simEngine(2);
+Simulation simEngine;
 GLRenderer renderEngine;
 
 #pragma region OpenGL RT interaction (deprecated)
@@ -58,7 +58,7 @@ void listenToPythonCommands() {
             else if (command == "MID_SIM") {
                 int add_mid_sim;
                 if (ss >> add_mid_sim) {
-                    simEngine.add_mid_sim = add_mid_sim;
+                    simEngine.addMidSim = add_mid_sim;
                 }
             }
         }
@@ -78,10 +78,11 @@ int main(int argc, char* argv[])
     if (argc > 1) {
         winX = std::stoi(argv[1]);
         winY = std::stoi(argv[2]);
-        simEngine.init_sphere = (std::atoi(argv[3]) == 1);
-        simEngine.add_mid_sim = (std::atoi(argv[4]) == 1);
+        simEngine.initSphere = (std::atoi(argv[3]) == 1);
+        simEngine.addMidSim = (std::atoi(argv[4]) == 1);
         simEngine.dt = static_cast<float>(std::atof(argv[5]));
         simEngine.isPaused = (std::atoi(argv[6]) == 1);
+        simEngine.materialType = std::stoi(argv[7]);
 
         listenToPythonCommands();
     }    
