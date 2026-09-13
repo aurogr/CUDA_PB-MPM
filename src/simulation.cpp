@@ -128,6 +128,20 @@ void Simulation::step() {
     if (ps.elastic.num_particles != 0) integrateParticle(ps.elastic, grid, dt, gravity, collisionManager.getDeviceData());
 }
 
+void::Simulation::updateMaterialSettings(MaterialType type, MaterialSettings settings) {
+    switch (type) {
+    case MaterialType::WATER:
+        ps.water.settings = settings;
+        break;
+    case MaterialType::SNOW:
+        ps.snow.settings = settings;
+        break;
+    case MaterialType::ELASTIC:
+        ps.elastic.settings = settings;
+        break;
+    }
+}
+
 
 void Simulation::free() {
     ps.free();

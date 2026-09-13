@@ -31,7 +31,7 @@ public:
     void step(); 
     void free();
     void togglePause();
-    void updateWaterParameters();
+    void updateMaterialSettings(MaterialType type, MaterialSettings settings);
 
     // Getter methods for the renderer
     const SimulationParticles& getParticles() const { return ps; }

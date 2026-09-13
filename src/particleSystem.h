@@ -46,7 +46,9 @@ public:
     Matrix2f* d_Fe = nullptr;    // Snow & Elastic
     Matrix2f* d_Fp = nullptr;    // Snow
 
-    ParticleSystem(){}
+    ParticleSystem(MaterialType matType) {
+        type = matType;
+    }
 
     ~ParticleSystem() {
         free();
@@ -162,9 +164,9 @@ public:
 
 struct SimulationParticles
 {
-    ParticleSystem water;
-    ParticleSystem snow;
-    ParticleSystem elastic;
+    ParticleSystem water = ParticleSystem(MaterialType::WATER);
+    ParticleSystem snow = ParticleSystem(MaterialType::SNOW);
+    ParticleSystem elastic = ParticleSystem(MaterialType::ELASTIC);
 
     int inline getParticlesCount() {
         return water.num_particles + snow.num_particles + elastic.num_particles;
