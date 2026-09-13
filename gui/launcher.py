@@ -39,48 +39,57 @@ class PyQT_gui(QWidget):
 
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
+        # Define main layout
         main_layout.addWidget(self.tabs)
         self.setLayout(main_layout)
 
-    def on_tab_changed(self, index):
-        self.tabs.setCurrentIndex(index)
+        # Detect when the C++ window/process closes
+        self.process.finished.connect(self.on_engine_finished)
 
     def init_sim_ui(self):
         tab = QWidget()
         layout = QVBoxLayout()
 
         # Startup controls group
-        startup_group_box = QGroupBox("Startup simulation parameters")
+        self.startup_group_box = QGroupBox("Startup simulation parameters")
         startup_layout = QFormLayout()
 
         # 1. Material radio button
         
         rb_label = QLabel("Choose material to simulate:")
 
+        # use a container so that it can go a little to the right
+        rb_container = QWidget()
+        rb_layout = QVBoxLayout(rb_container)
+        rb_layout.setContentsMargins(20, 0, 0, 0) # (left=20px, top=0, right=0, bottom=0)
+
         self.mat0 = QRadioButton("Water")
         self.mat0.setChecked(True)
-        self.mat0.toggled.connect(lambda:self.on_mat_rb(self.mat0))
+        self.mat0.toggled.connect(lambda: self.on_mat_rb(self.mat0))
         
         self.mat1 = QRadioButton("Snow")
         self.mat1.setChecked(False)
-        self.mat1.toggled.connect(lambda:self.on_mat_rb(self.mat1))
+        self.mat1.toggled.connect(lambda: self.on_mat_rb(self.mat1))
         
         self.mat2 = QRadioButton("Elastic")
         self.mat2.setChecked(False)
-        self.mat2.toggled.connect(lambda:self.on_mat_rb(self.mat2))
+        self.mat2.toggled.connect(lambda: self.on_mat_rb(self.mat2))
+
+        rb_layout.addWidget(self.mat0)
+        rb_layout.addWidget(self.mat1)
+        rb_layout.addWidget(self.mat2)
 
         # 2. Init sphere Checkbox
         self.init_sphere = QCheckBox("Init with material sphere")
+        self.init_sphere.setCheckState(Qt.CheckState.Checked)
 
         # 3. Set layout
-        startup_layout.addWidget(rb_label)
-        startup_layout.addWidget(self.mat0)
-        startup_layout.addWidget(self.mat1)
-        startup_layout.addWidget(self.mat2)
-        startup_layout.addWidget(self.init_sphere)
+        startup_layout.addRow(rb_label)
+        startup_layout.addRow(rb_container)
+        startup_layout.addRow(self.init_sphere)
 
-        startup_group_box.setLayout(startup_layout)
-        layout.addWidget(startup_group_box)
+        self.startup_group_box.setLayout(startup_layout)
+        layout.addWidget(self.startup_group_box)
 
         # Real time controls group
         running_group_box = QGroupBox("Real time simulation parameters")
@@ -99,12 +108,13 @@ class PyQT_gui(QWidget):
 
         # 3. Pause Checkbox
         self.pause = QCheckBox("Pause simulation")
+        self.pause.setCheckState(Qt.CheckState.Checked)
         self.pause.stateChanged.connect(self.on_pause)
         
-        running_layout.addWidget(self.add_mid_sim)
+        running_layout.addRow(self.add_mid_sim)
         running_layout.addRow("Time Step (dt):", self.timestep_slider)
         running_layout.addRow("", self.timestep_label)
-        running_layout.addWidget(self.pause)
+        running_layout.addRow(self.pause)
 
         running_group_box.setLayout(running_layout)
         layout.addWidget(running_group_box)
@@ -122,31 +132,79 @@ class PyQT_gui(QWidget):
         tab.setLayout(layout)
         return tab
 
+    PARAM_GROUPS = {
+        "Water Settings": [
+            ("water_relaxation",   "Relaxation",         0, 100, 90,  0.01),
+            ("viscosity",          "Viscosity",          0, 100, 0,   0.01),
+        ],
+        "Snow Settings": [
+            ("snow_relaxation",    "Relaxation",         0, 100, 50,  0.01),
+            ("crit_compression",   "Crit Compression",   0, 500, 25,  0.001),
+            ("crit_stretch",       "Crit Stretch",       0, 500, 75,  0.0001),
+            ("hard_coeff",         "Hardening Coeff",    0, 500, 10,  0.1),
+        ],
+        "Elastic Settings": [
+            ("elastic_relaxation", "Relaxation",         0, 100, 95,  0.01),
+            ("elasticity_ratio",   "Elasticity Ratio",   0, 100, 90,  0.01),
+        ]
+    }
+
     def init_mat_ui(self):
         tab = QWidget()
         layout = QVBoxLayout()
 
-        # Startup controls group
-        waterGroupBox = QGroupBox("Water parameters")
-        waterLayout = QFormLayout()
+        self.sliders = {}
+        self.labels = {}
+        self.param_group_boxes = {}
 
-        # 1. Relaxation slider
-        self.rel_label = QLabel("dt: 0.05")
-        self.rel_slider = QSlider(Qt.Horizontal)
-        self.rel_slider.setRange(0.0, 1.0)
-        self.rel_slider.setTickInterval(0.1)
-        self.rel_slider.setSingleStep(0.1)
-        #self.rel_slider.valueChanged.connect(self.on_dt_changed)
+        for group_name, params in self.PARAM_GROUPS.items():
+            group_box = QGroupBox(group_name)
+            group_box.setCheckable(True) # group box checkable so that it can collapse
 
-        # 3. Set layout
-        waterLayout.addWidget(self.rel_label)
-        waterLayout.addWidget(self.rel_slider)
+            box_layout = QVBoxLayout()
+            container = QWidget()
+            form_layout = QFormLayout()
 
-        waterGroupBox.setLayout(waterLayout)
-        layout.addWidget(waterGroupBox)
+            for key, name, min_v, max_v, default_v, scale in params:
+                slider = QSlider(Qt.Horizontal)
+                slider.setRange(min_v, max_v)
+                slider.setValue(default_v)
+                
+                val_label = QLabel(f"{default_v * scale:.4f}")
+                
+                self.sliders[key] = (slider, scale)
+                self.labels[key] = val_label
 
+                slider.valueChanged.connect(self.on_send_material_settings)
+
+                form_layout.addRow(QLabel(name), slider)
+                form_layout.addRow("", val_label)
+
+            container.setLayout(form_layout)
+            box_layout.addWidget(container)
+            group_box.setLayout(box_layout)
+
+            # Toggle container visibility on check state change (collapses content, keeps header)
+            group_box.toggled.connect(container.setVisible)
+
+            layout.addWidget(group_box)
+            self.param_group_boxes[group_name] = group_box
+
+        self.param_group_boxes["Water Settings"].setChecked(True)
+        self.param_group_boxes["Snow Settings"].setChecked(False)
+        self.param_group_boxes["Elastic Settings"].setChecked(False)
+
+        layout.addStretch()
         tab.setLayout(layout)
         return tab
+
+    def update_material_group_visibility(self):
+        chosen_mat = 0 if self.mat0.isChecked() else 1 if self.mat1.isChecked() else 2
+
+        # Collapse inactive material settings
+        self.param_group_boxes["Water Settings"].setChecked(chosen_mat == 0)
+        self.param_group_boxes["Snow Settings"].setChecked(chosen_mat == 1)
+        self.param_group_boxes["Elastic Settings"].setChecked(chosen_mat == 2)
 
     # Launch C++ .exe with starting arguments
     def start_engine(self):
@@ -169,17 +227,31 @@ class PyQT_gui(QWidget):
         chosen_mat = 0 if self.mat0.isChecked() else 1 if self.mat1.isChecked() else 2
         args = [str(self.sim_x), str(self.sim_y), init_sphere_str, add_mid_sim_str, str(dt_val), is_paused_str, str(chosen_mat)]
 
+        # Disable startup settings
+        self.startup_group_box.setEnabled(False)
+
         # Convert Path object to string for QProcess
         self.process.start(str(exe_path), args)
 
     # Handle events while simulation is running by passing commands
+    def on_engine_finished(self, exit_code, exit_status):
+        self.console.append(f"[C++ Engine] Closed with exit code: {exit_code}")
+
+        # Enable startup controls
+        self.startup_group_box.setEnabled(True)
+        self.launch_btn.setEnabled(True)
+
+    def on_tab_changed(self, index):
+        self.tabs.setCurrentIndex(index)
+
     def on_add_mid_sim(self, value):   
         if self.process.state() == QProcess.Running:
             add_mid_sim = 1 if self.add_mid_sim.isChecked() else 0
             command = f"MID_SIM {add_mid_sim}\n"
             self.process.write(command.encode("utf-8"))
 
-    def on_mat_rb(self, value):   
+    def on_mat_rb(self, value):  
+        self.update_material_group_visibility();
         if self.process.state() == QProcess.Running:
             chosen_mat = 0 if self.mat0.isChecked() else 1 if self.mat1.isChecked() else 2
             command = f"MATERIAL_TYPE {chosen_mat}\n"
@@ -194,10 +266,43 @@ class PyQT_gui(QWidget):
             self.process.write(command.encode("utf-8"))
 
     def on_pause(self, state):
+        self.on_send_material_settings() #TODO: This is just a quick fix so it initializes with material settings, but i need to change this
         if self.process.state() == QProcess.Running:
             is_paused = 1 if self.pause.isChecked() else 0
             command = f"PAUSE {is_paused}\n"
             self.process.write(command.encode("utf-8"))
+
+    def on_send_material_settings(self):
+        values = {}
+        for key, (slider, scale) in self.sliders.items():
+            val = slider.value() * scale
+            values[key] = val
+            self.labels[key].setText(f"{val:.4f}")
+
+        if self.process.state() != QProcess.Running:
+            return
+
+        chosen_mat = 0 if self.mat0.isChecked() else 1 if self.mat1.isChecked() else 2
+
+        # relaxation value based on current material TODO: CHANGE ONCE IT ALLOWS MULTIMATERIALS
+        if chosen_mat == 0:
+            relaxation_val = values["water_relaxation"]
+        elif chosen_mat == 1:
+            relaxation_val = values["snow_relaxation"]
+        else:
+            relaxation_val = values["elastic_relaxation"]
+
+        cmd = (
+            f"SET_MAT_SETTINGS {chosen_mat} "
+            f"{relaxation_val:.4f} "
+            f"{values['viscosity']:.4f} "
+            f"{values['crit_compression']:.4f} "
+            f"{values['crit_stretch']:.4f} "
+            f"{values['hard_coeff']:.4f} "
+            f"{values['elasticity_ratio']:.4f}\n"
+        )
+
+        self.process.write(cmd.encode("utf-8"))
         
     def handle_stdout(self):
         data = self.process.readAllStandardOutput().data().decode("utf-8")

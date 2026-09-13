@@ -6,13 +6,10 @@
 #include "constants.h"
 #include "boundary.h"
 
-
-
 /// <summary>
 /// Solve material constraints for each particle
 /// </summary>
 void solveConstraints(const ParticleSystem& ps);
-
 
 /// <summary>
 /// Particle to grid. Transfer particle mass, momentum, and force (computed using stresses) to grid nodes using interpolation functions.

@@ -61,6 +61,15 @@ void listenToPythonCommands() {
                     simEngine.addMidSim = add_mid_sim;
                 }
             }
+            else if (command == "SET_MAT_SETTINGS") {
+                int matType;
+                MaterialSettings s;
+                if (ss >> matType >> s.relaxation >> s.viscosity
+                    >> s.crit_compression >> s.crit_stretch >> s.hard_coeff >> s.elasticity_ratio)
+                {
+                    simEngine.updateMaterialSettings((MaterialType)matType, s);
+                }
+            }
         }
         std::cout << "[C++ Engine] Stdin stream closed." << std::endl;
         }).detach();

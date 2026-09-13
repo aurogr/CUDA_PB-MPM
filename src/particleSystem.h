@@ -11,9 +11,8 @@ enum class MaterialType {
 };
 
 struct MaterialSettings {
-    // Shared / General
-    float relaxation = 0.9f;
-    float stiffness = 0.15f;
+    // Shared
+    float relaxation = 0.9f; // water, snow and elastic
 
     // Water specific
     float viscosity = 0.0f;
