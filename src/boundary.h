@@ -8,12 +8,12 @@ struct CollisionObjectData {
     float friction;
 };
 
-struct CollisionManagerData {
+struct CollisionManagerDeviceData {
     CollisionObjectData* d_objects;
     int count;
 };
 
-class LevelSetCollisionManager {
+class CollisionManager {
 public:
     std::vector<CollisionObjectData> h_objects;
     CollisionObjectData* d_objects = nullptr;
@@ -38,8 +38,8 @@ public:
         cudaMemcpy(d_objects, h_objects.data(), bytes, cudaMemcpyHostToDevice);
     }
 
-    CollisionManagerData getDeviceData() const {
-        return CollisionManagerData{ d_objects, count };
+    CollisionManagerDeviceData getDeviceData() const {
+        return CollisionManagerDeviceData{ d_objects, count };
     }
 
     void free() {

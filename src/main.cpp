@@ -5,372 +5,130 @@
 #include <cuda_runtime.h>
 #include <cuda_gl_interop.h>
 
+#include <chrono>
 #include <iostream>
+#include <string> 
+#include <sstream> 
+#include <thread>    
 #include <vector>
+
 #include "constants.h"
 #include "solver.cuh"
-#include "grid.h"
-#include "particleSystem.h"
-#include "boundary.h"
 #include "types.h"
+#include "render.h"
 
 /* Globals */
-Grid grid;
-ParticleSystem<SnowData> ps;
-LevelSetCollisionManager collisionManager;
+Simulation simEngine;
+GLRenderer renderEngine;
 
-int stepCount = 0;
+#pragma region Python RT interaction
+void listenToPythonCommands() {
+    std::thread([]() {
+        std::cout << "[C++ Engine] Command listener thread started." << std::endl;
 
-void initGLContext();
-GLFWwindow* initGLFWContext();
+        std::string line;
+        while (std::getline(std::cin, line)) {
+            if (line.empty()) continue; // Ignore empty lines
 
-bool pauseSimulation = true;
-bool stepOnce = false;
+            std::stringstream ss(line);
+            std::string command;
+            ss >> command;
 
-GLuint particleVBO;
-cudaGraphicsResource_t particleCudaResource;
-
-// Key callback function
-void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    if (action == GLFW_PRESS) {
-        if (key == GLFW_KEY_SPACE) {
-            pauseSimulation = !pauseSimulation; // Toggle play/pause
-        }
-        if (key == GLFW_KEY_S) {
-            stepOnce = true; // Step exactly 1 frame forward
-        }
-    }
-}
-
-#pragma region Material Point Method Algorithm
-
-void Initialization()
-{
-    grid.initialize(X_GRID, Y_GRID);
-
-    // Add collision objects
-    float wallThickness = 2.0f; // Thickness of the solid wall
-    float wall_friction = 0.2f;
-
-    // Left border
-    collisionManager.addBox(
-        Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f),
-        Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f),
-        0.0f, wall_friction
-    );
-
-    // Right Border 
-    collisionManager.addBox(
-        Vector2f(X_GRID - wallThickness * 0.5f, Y_GRID * 0.5f),
-        Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f),
-        0.0f, wall_friction
-    );
-
-    // Bottom Border
-    collisionManager.addBox(
-        Vector2f(X_GRID * 0.5f, wallThickness * 0.5f),
-        Vector2f(X_GRID * 0.5f, wallThickness * 0.5f),
-        0.0f, wall_friction
-    );
-
-    // Top Border
-    collisionManager.addBox(
-        Vector2f(X_GRID * 0.5f, Y_GRID - wallThickness * 0.5f),
-        Vector2f(X_GRID * 0.5f, wallThickness * 0.5f),
-        0.0f, wall_friction
-    );
-
-    // Collider sphere
-    collisionManager.addSphere(Vector2f(75.0f, 20.0f), 10.0f, .3f);
-
-    collisionManager.copyToDevice();
-
-    // Spawn an initial shape of fluid
-    std::vector<Vector2f> init_pos;
-    std::vector<Vector2f> init_vel;
-
-    if (INIT_SPHERE) {
-        Vector2f center(static_cast<float>(X_GRID) * 0.5f, static_cast<float>(Y_GRID) * 0.5f);
-
-        float radius = 20.0f; // Size of sphere
-        float spacing = CELL_SPACING; // Distance between particles
-
-        // Generate particles in a circle
-        for (float x = -radius; x <= radius; x += spacing) {
-            for (float y = -radius; y <= radius; y += spacing) {
-                if (x * x + y * y <= radius * radius) {
-                    init_pos.push_back(Vector2f(center.x + x, center.y + y));
-                    init_vel.push_back(Vector2f(10.0f, 0.0f));
+            if (command == "DT") {
+                float newDt;
+                if (ss >> newDt) {
+                    simEngine.setPhysicsDt(newDt);
+                }
+            }
+            else if (command == "PAUSE") {
+                int pauseState;
+                if (ss >> pauseState) {
+                    simEngine.setPause(pauseState);
+                }
+            }
+            else if (command == "MID_SIM") {
+                int add_mid_sim;
+                if (ss >> add_mid_sim) {
+                    simEngine.setAddMidSim(add_mid_sim);
+                }
+            }
+            else if (command == "SET_MAT_SETTINGS") {
+                int matType;
+                MaterialSettings s;
+                if (ss >> matType >> s.relaxation >> s.viscosity
+                    >> s.crit_compression >> s.crit_stretch >> s.hard_coeff >> s.elasticity_ratio)
+                {
+                    simEngine.updateMaterialSettings((MaterialType)matType, s);
                 }
             }
         }
-
-        int particle_count = static_cast<int>(init_pos.size());
-
-        // Pass the corrected values into your particle system initialization
-        ps.initialize(particle_count, init_pos, init_vel);
-    } else
-        ps.initialize(static_cast<int>(init_pos.size()), init_pos, init_vel);
-}
-
-void AddParticles() {
-    std::vector<Vector2f> new_pos;
-    std::vector<Vector2f> new_vel;
-
-    Vector2f v(30.0f, 0.0f);
-
-    for (int p = 0; p < 8; ++p) {
-        float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
-        float pos_x = static_cast<float>(INT_CELL_SPAN);
-        float pos_y = static_cast<float>(Y_GRID) - 2.0f * static_cast<float>(INT_CELL_SPAN) - 0.5f * static_cast<float>(p) - r;
-
-        new_pos.push_back(make_float2(pos_x, pos_y));
-        new_vel.push_back(v);
-    }
-
-    ps.addParticlesMidSimulation(new_pos, new_vel);
-}
-
-void Update()
-{
-    if (ps.num_particles < MAX_PARTICLES && stepCount % EMISSION_INTERVAL == 0 && ADD_MID_SIM) {
-        AddParticles();
-    }
-     
-    stepCount++;
-
-    grid.clear();
-    p2g(ps, grid, PHYSICS_DT);
-    updateGrid(grid, PHYSICS_DT, collisionManager.getDeviceData());
-    g2p(ps, grid, PHYSICS_DT);
-}
-#pragma endregion
-
-#pragma region OpenGL
-
-void InitOpenGLInterop()
-{
-    // 1. Generate OpenGL buffer to store particles
-    glGenBuffers(1, &particleVBO);
-    glBindBuffer(GL_ARRAY_BUFFER, particleVBO);
-
-    // 2. Allocate enough memory for max particles
-    glBufferData(GL_ARRAY_BUFFER, MAX_PARTICLES * sizeof(Vector2f), nullptr, GL_DYNAMIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-    // 3. Register the buffer with CUDA
-    cudaGraphicsGLRegisterBuffer(&particleCudaResource, particleVBO, cudaGraphicsMapFlagsWriteDiscard);
-}
-
-void RenderParticles()
-{
-    if (ps.num_particles == 0) return;
-
-    // 1. Map the OpenGL resource to CUDA ptr
-    cudaGraphicsMapResources(1, &particleCudaResource, 0);
-
-    Vector2f* d_vbo_ptr;
-    size_t num_bytes;
-    cudaGraphicsResourceGetMappedPointer((void**)&d_vbo_ptr, &num_bytes, particleCudaResource);
-
-    // 2. Copy directly from device to device
-    cudaMemcpy(d_vbo_ptr, ps.d_Xp, ps.num_particles * sizeof(Vector2f), cudaMemcpyDeviceToDevice);
-
-    // 3. Unmap the resource so OpenGL can use it again
-    cudaGraphicsUnmapResources(1, &particleCudaResource, 0);
-
-    // 4. Render
-    glBindBuffer(GL_ARRAY_BUFFER, particleVBO);
-    glEnableClientState(GL_VERTEX_ARRAY);
-
-    glVertexPointer(2, GL_FLOAT, 0, (void*)0);
-
-    glColor3f(0.2f, 0.6f, 1.0f);
-    glEnable(GL_POINT_SMOOTH);
-    glPointSize(3.0);
-
-    glDrawArrays(GL_POINTS, 0, ps.num_particles);
-
-    glDisableClientState(GL_VERTEX_ARRAY);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-}
-
-void RenderGridBackground()
-{
-    // Save current OpenGL states if needed, or set up color for grid lines (e.g., subtle gray)
-    glColor3f(0.2f, 0.2f, 0.2f); // Dark gray color for grid lines
-    glLineWidth(1.0f);
-
-    glBegin(GL_LINES);
-
-    // Draw vertical grid lines
-    for (int x = 0; x <= X_GRID; ++x)
-    {
-        float xPos = static_cast<float>(x) * H;
-        glVertex2f(xPos, 0.0f);
-        glVertex2f(xPos, static_cast<float>(Y_GRID) * H);
-    }
-
-    // Draw horizontal grid lines
-    for (int y = 0; y <= Y_GRID; ++y)
-    {
-        float yPos = static_cast<float>(y) * H;
-        glVertex2f(0.0f, yPos);
-        glVertex2f(static_cast<float>(X_GRID) * H, yPos);
-    }
-
-    glEnd();
-}
-
-void RenderColliders() {
-    glColor3f(.5f, .0f, .0f);
-
-    for (const auto& obj : collisionManager.h_objects) {
-        for (const auto& obj : collisionManager.h_objects) {
-            if (obj.type == 1) {
-                float cx = obj.center.x;
-                float cy = obj.center.y;
-                float hx = obj.size.x; // Half-width
-                float hy = obj.size.y; // Half-height
-
-                if (obj.rotation == 0.0f) {
-                    glBegin(GL_QUADS);
-                    glVertex2f(cx - hx, cy - hy); // Bottom-left
-                    glVertex2f(cx + hx, cy - hy); // Bottom-right
-                    glVertex2f(cx + hx, cy + hy); // Top-right
-                    glVertex2f(cx - hx, cy + hy); // Top-left
-                    glEnd();
-                }
-                else {
-                    float c = cosf(obj.rotation);
-                    float s = sinf(obj.rotation);
-
-                    auto rotatePoint = [cx, cy, c, s](float localX, float localY) {
-                        float rx = c * localX - s * localY;
-                        float ry = s * localX + c * localY;
-                        return Vector2f(cx + rx, cy + ry);
-                        };
-
-                    Vector2f bl = rotatePoint(-hx, -hy);
-                    Vector2f br = rotatePoint(hx, -hy);
-                    Vector2f tr = rotatePoint(hx, hy);
-                    Vector2f tl = rotatePoint(-hx, hy);
-
-                    glBegin(GL_QUADS);
-                    glVertex2f(bl.x, bl.y);
-                    glVertex2f(br.x, br.y);
-                    glVertex2f(tr.x, tr.y);
-                    glVertex2f(tl.x, tl.y);
-                    glEnd();
-                }
-            }
-            else if (obj.type == 0) {
-                float cx = obj.center.x;
-                float cy = obj.center.y;
-                float radius = obj.size.x; // Assuming radius is stored in size.x
-                int segments = 20;         // Smoothness of the circle
-
-                glBegin(GL_TRIANGLE_FAN);
-                glVertex2f(cx, cy); // Center of the circle for the fan
-
-                for (int i = 0; i <= segments; ++i) {
-                    float theta = 2.0f * 3.1415926f * static_cast<float>(i) / static_cast<float>(segments);
-                    float x = cx + radius * cosf(theta);
-                    float y = cy + radius * sinf(theta);
-                    glVertex2f(x, y);
-                }
-                glEnd();
-            }
-        }
-    }
-}
-
-GLFWwindow* initGLFWContext()
-{
-    if (!glfwInit()) exit(EXIT_FAILURE);
-
-    GLFWwindow* window = glfwCreateWindow(X_WINDOW, Y_WINDOW, "CUDA MPM Simulation", NULL, NULL);
-    if (!window) {
-        glfwTerminate();
-        exit(EXIT_FAILURE);
-    }
-
-    glfwMakeContextCurrent(window);
-
-    GLenum err = glewInit();
-    if (GLEW_OK != err) {
-        std::cerr << "[CRASH] Error initializing GLEW: " << glewGetErrorString(err) << std::endl;
-        exit(EXIT_FAILURE);
-    }
-
-    return window;
-}
-
-void initGLContext()
-{
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glOrtho(0, X_GRID, 0, Y_GRID, -1, 1);
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-
-    glViewport(0, 0, (GLsizei)X_WINDOW, (GLsizei)Y_WINDOW);
-    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-}
-
-void Free_OpenGL() {
-    cudaGraphicsUnregisterResource(particleCudaResource);
-    glDeleteBuffers(1, &particleVBO);
+        std::cout << "[C++ Engine] Stdin stream closed." << std::endl;
+        }).detach();
 }
 #pragma endregion
 
 #pragma region Main
-int main()
+int main(int argc, char* argv[])
 {
-    std::cout << "[INFO] Starting CUDA MPM Simulation..." << std::endl;
+    // Default values if run directly from Visual Studio
+    int winX = 100;
+    int winY = 500;
 
-    try {
-        Initialization();
+    // Get arguments from python launcher (if there are none we aren't using python)
+    if (argc > 1) {
+        winX = std::stoi(argv[1]);
+        winY = std::stoi(argv[2]);
+        simEngine.setInitSphere((std::atoi(argv[3]) == 1));
+        simEngine.setAddMidSim((std::atoi(argv[4]) == 1));
+        simEngine.setPhysicsDt(static_cast<float>(std::atof(argv[5])));
+        simEngine.setPause((std::atoi(argv[6]) == 1));
+        simEngine.setMaterialType(std::stoi(argv[7]));
 
-        GLFWwindow* window = initGLFWContext();
-        if (!window) return -1;
+        listenToPythonCommands();
+    }    
 
-        glfwSetKeyCallback(window, key_callback);
-
-        initGLContext();
-
-        InitOpenGLInterop();
-
-        while (!glfwWindowShouldClose(window))
-        {
-            glClear(GL_COLOR_BUFFER_BIT);
-
-            // window renders every frame but simulation runs (in substeps) only when unpased
-            if (!pauseSimulation || stepOnce) {
-
-                for(int step = 0; step < SIM_SUBSTEPS; step++)
-                    Update();
-
-                stepOnce = false;
-            }
-
-            RenderGridBackground();
-            RenderColliders();
-            RenderParticles();
-
-            glfwSwapBuffers(window);
-            glfwPollEvents();
-        }
-
-        ps.free();
-        grid.free();
-        glfwTerminate();
-        Free_OpenGL();
-    }
-    catch (const std::exception& e) {
-        std::cerr << "[CRASH] Exception caught: " << e.what() << std::endl;
+    // Create GL window and callbacks
+    if (!glfwInit()) {
+        std::cerr << "[ERROR] Failed to initialize GLFW" << std::endl;
         return -1;
     }
+
+    GLFWwindow* window = glfwCreateWindow(X_WINDOW, Y_WINDOW, "C++/CUDA PB-MPM SIMULATION", nullptr, nullptr);
+    if (!window) {
+        glfwTerminate();
+        return -1;
+    }
+
+    glfwSetWindowPos(window, winX, winY);
+
+    glfwMakeContextCurrent(window);
+
+    // Instantiate engines
+    simEngine.initialize();
+    renderEngine.initializeGL();
+    renderEngine.resizeViewport(X_WINDOW, Y_WINDOW);
+
+    auto prev_time = std::chrono::high_resolution_clock::now();
+
+    // Main render loop
+    while (!glfwWindowShouldClose(window)) { // or your equivalent loop
+        auto current_time = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<float> elapsed = current_time - prev_time;
+        prev_time = current_time;
+
+        float actual_render_dt = elapsed.count();
+
+        simEngine.step(actual_render_dt);
+
+        renderEngine.render(simEngine);
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
+
+    // Cleanup
+    simEngine.free();
+    renderEngine.freeGL();
+    glfwTerminate();
 
     return 0;
 }
