@@ -11,8 +11,6 @@ Simulation::~Simulation() {
     free();
 }
 
-void Simulation::togglePause() { isPaused = !isPaused; }
-
 void Simulation::initialize() {
     grid.initialize(X_GRID, Y_GRID);
 
@@ -24,7 +22,8 @@ void Simulation::initialize() {
     collisionManager.addBox(Vector2f(X_GRID - wallThickness * 0.5f, Y_GRID * 0.5f), Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f), 0.0f, wall_friction);
     collisionManager.addBox(Vector2f(X_GRID * 0.5f, wallThickness * 0.5f), Vector2f(X_GRID * 0.5f, wallThickness * 0.5f), 0.0f, wall_friction);
     collisionManager.addBox(Vector2f(X_GRID * 0.5f, Y_GRID - wallThickness * 0.5f), Vector2f(X_GRID * 0.5f, wallThickness * 0.5f), 0.0f, wall_friction);
-    collisionManager.addSphere(Vector2f(30.0f, 10.0f), 4.0f, .3f);
+    collisionManager.addSphere(Vector2f(20.0f, 35.0f), 4.0f, .3f);
+    collisionManager.addSphere(Vector2f(80.0f, 15.0f), 8.0f, .3f);
     collisionManager.copyToDevice();
 
     // Spawn an initial shape of water
@@ -48,7 +47,7 @@ void Simulation::initialize() {
             for (float y = -radius; y <= radius; y += spacing) {
                 if (x * x + y * y <= radius * radius) {
                     init_pos.push_back(Vector2f(center.x + x, center.y + y));
-                    init_displacement.push_back(dt * init_vel);
+                    init_displacement.push_back(physicsDt * init_vel);
                 }
             }
         }
@@ -95,37 +94,53 @@ void AddParticlesMidSim(SimulationParticles& ps, float dt, int materialType) {
         ps.elastic.addParticlesMidSimulation(init_pos, init_displacement);
 }
 
-void Simulation::step() {
+void Simulation::step(float renderDt) {
     if (isPaused || (ps.getParticlesCount() == 0 && !addMidSim)) return;
 
-    stepCount++;
+    // Use time accumulator to calculate how many physics steps fit in a frame (based on an interface given physics timestep)
+    if (renderDt > 0.1f) renderDt = 0.1f;
 
-    if (ps.getParticlesCount() < MAX_PARTICLES /*&& stepCount % EMISSION_INTERVAL == 0*/ && addMidSim) {
-        AddParticlesMidSim(ps, dt, materialType);
+    timeAccumulator += renderDt;
+
+    int substepCount = static_cast<int>(timeAccumulator / physicsDt);
+
+    const int MAX_SUBSTEPS = 100; // Prevent spiral of death with frame lag
+    if (substepCount > MAX_SUBSTEPS) {
+        substepCount = MAX_SUBSTEPS;
     }
 
-    for (int i = 0; i < solverIterations; i++) {
+    timeAccumulator -= static_cast<float>(substepCount) * physicsDt;
 
-        if (ps.water.num_particles != 0) solveConstraints(ps.water);
-        if (ps.snow.num_particles != 0) solveConstraints(ps.snow);
-        if (ps.elastic.num_particles != 0) solveConstraints(ps.elastic);
+    // Execute physics steps for every substep
+    for (int substep = 0; substep < substepCount; ++substep) {
 
-        grid.clear();
+        if (ps.getParticlesCount() < MAX_PARTICLES && addMidSim) {
+            AddParticlesMidSim(ps, physicsDt, materialType);
+        }
 
-        if (ps.water.num_particles != 0) p2g(ps.water, grid);
-        if (ps.snow.num_particles != 0) p2g(ps.snow, grid);
-        if (ps.elastic.num_particles != 0) p2g(ps.elastic, grid);
+        // PB-MPM loop solver
+        for (int i = 0; i < solverIterations; i++) {
+            if (ps.water.num_particles != 0) solveConstraints(ps.water);
+            if (ps.snow.num_particles != 0) solveConstraints(ps.snow);
+            if (ps.elastic.num_particles != 0) solveConstraints(ps.elastic);
 
-        updateGrid(grid, collisionManager.getDeviceData());
+            grid.clear();
 
-        if (ps.water.num_particles != 0) g2p(ps.water, grid);
-        if (ps.snow.num_particles != 0) g2p(ps.snow, grid);
-        if (ps.elastic.num_particles != 0) g2p(ps.elastic, grid);
+            if (ps.water.num_particles != 0) p2g(ps.water, grid);
+            if (ps.snow.num_particles != 0) p2g(ps.snow, grid);
+            if (ps.elastic.num_particles != 0) p2g(ps.elastic, grid);
+
+            updateGrid(grid, collisionManager.getDeviceData());
+
+            if (ps.water.num_particles != 0) g2p(ps.water, grid);
+            if (ps.snow.num_particles != 0) g2p(ps.snow, grid);
+            if (ps.elastic.num_particles != 0) g2p(ps.elastic, grid);
+        }
+
+        if (ps.water.num_particles != 0) integrateParticle(ps.water, grid, physicsDt, gravity, collisionManager.getDeviceData());
+        if (ps.snow.num_particles != 0) integrateParticle(ps.snow, grid, physicsDt, gravity, collisionManager.getDeviceData());
+        if (ps.elastic.num_particles != 0) integrateParticle(ps.elastic, grid, physicsDt, gravity, collisionManager.getDeviceData());
     }
-
-    if (ps.water.num_particles != 0) integrateParticle(ps.water, grid, dt, gravity, collisionManager.getDeviceData());
-    if (ps.snow.num_particles != 0) integrateParticle(ps.snow, grid, dt, gravity, collisionManager.getDeviceData());
-    if (ps.elastic.num_particles != 0) integrateParticle(ps.elastic, grid, dt, gravity, collisionManager.getDeviceData());
 }
 
 void::Simulation::updateMaterialSettings(MaterialType type, MaterialSettings settings) {
@@ -141,7 +156,6 @@ void::Simulation::updateMaterialSettings(MaterialType type, MaterialSettings set
         break;
     }
 }
-
 
 void Simulation::free() {
     ps.free();

@@ -212,8 +212,8 @@ class PyQT_gui(QWidget):
 
         # Path
         project_root = Path(__file__).resolve().parent.parent
-        exe_path = project_root / "build" / "Debug" / "CUDA_PB_MPM.exe"
-        #exe_path = project_root / "build" / "Release" / "CUDA_PB_MPM.exe"
+        #exe_path = project_root / "build" / "Debug" / "CUDA_PB_MPM.exe"
+        exe_path = project_root / "build" / "Release" / "CUDA_PB_MPM.exe"
 
         if not exe_path.exists():
             self.console.append(f"[ERROR] Binary not found at: {exe_path}")

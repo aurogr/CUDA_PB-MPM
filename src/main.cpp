@@ -5,11 +5,13 @@
 #include <cuda_runtime.h>
 #include <cuda_gl_interop.h>
 
+#include <chrono>
 #include <iostream>
 #include <string> 
 #include <sstream> 
 #include <thread>    
 #include <vector>
+
 #include "constants.h"
 #include "solver.cuh"
 #include "types.h"
@@ -18,17 +20,6 @@
 /* Globals */
 Simulation simEngine;
 GLRenderer renderEngine;
-
-#pragma region OpenGL RT interaction (deprecated)
-// Key callback function
-void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    if (action == GLFW_PRESS) {
-        if (key == GLFW_KEY_SPACE) {
-            simEngine.togglePause();
-        }
-    }
-}
-#pragma endregion
 
 #pragma region Python RT interaction
 void listenToPythonCommands() {
@@ -46,19 +37,19 @@ void listenToPythonCommands() {
             if (command == "DT") {
                 float newDt;
                 if (ss >> newDt) {
-                    simEngine.dt = newDt;
+                    simEngine.setPhysicsDt(newDt);
                 }
             }
             else if (command == "PAUSE") {
                 int pauseState;
                 if (ss >> pauseState) {
-                    simEngine.isPaused = pauseState;
+                    simEngine.setPause(pauseState);
                 }
             }
             else if (command == "MID_SIM") {
                 int add_mid_sim;
                 if (ss >> add_mid_sim) {
-                    simEngine.addMidSim = add_mid_sim;
+                    simEngine.setAddMidSim(add_mid_sim);
                 }
             }
             else if (command == "SET_MAT_SETTINGS") {
@@ -87,11 +78,11 @@ int main(int argc, char* argv[])
     if (argc > 1) {
         winX = std::stoi(argv[1]);
         winY = std::stoi(argv[2]);
-        simEngine.initSphere = (std::atoi(argv[3]) == 1);
-        simEngine.addMidSim = (std::atoi(argv[4]) == 1);
-        simEngine.dt = static_cast<float>(std::atof(argv[5]));
-        simEngine.isPaused = (std::atoi(argv[6]) == 1);
-        simEngine.materialType = std::stoi(argv[7]);
+        simEngine.setInitSphere((std::atoi(argv[3]) == 1));
+        simEngine.setAddMidSim((std::atoi(argv[4]) == 1));
+        simEngine.setPhysicsDt(static_cast<float>(std::atof(argv[5])));
+        simEngine.setPause((std::atoi(argv[6]) == 1));
+        simEngine.setMaterialType(std::stoi(argv[7]));
 
         listenToPythonCommands();
     }    
@@ -117,12 +108,19 @@ int main(int argc, char* argv[])
     renderEngine.initializeGL();
     renderEngine.resizeViewport(X_WINDOW, Y_WINDOW);
 
-    // Main render loop
-    while (!glfwWindowShouldClose(window))
-    {
-        simEngine.step();
-        renderEngine.render(simEngine);
+    auto prev_time = std::chrono::high_resolution_clock::now();
 
+    // Main render loop
+    while (!glfwWindowShouldClose(window)) { // or your equivalent loop
+        auto current_time = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<float> elapsed = current_time - prev_time;
+        prev_time = current_time;
+
+        float actual_render_dt = elapsed.count();
+
+        simEngine.step(actual_render_dt);
+
+        renderEngine.render(simEngine);
         glfwSwapBuffers(window);
         glfwPollEvents();
     }

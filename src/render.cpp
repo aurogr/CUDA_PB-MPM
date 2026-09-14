@@ -24,7 +24,7 @@ void GLRenderer::resizeViewport(int w, int h) {
     glViewport(0, 0, w, h);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glOrtho(0, X_GRID, 0, Y_GRID, -1, 1);
+    glOrtho(0, X_GRID * H, 0, Y_GRID * H, -1.0f, 1.0f);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
@@ -80,12 +80,12 @@ void GLRenderer::renderBackgroundGrid() {
     glLineWidth(1.0f);
     glBegin(GL_LINES);
     for (int x = 0; x <= X_GRID; ++x) {
-        glVertex2f(static_cast<float>(x) * H, 0.0f);
-        glVertex2f(static_cast<float>(x) * H, static_cast<float>(Y_GRID) * H);
+        glVertex2f(static_cast<float>(x), 0.0f);
+        glVertex2f(static_cast<float>(x), static_cast<float>(Y_GRID));
     }
     for (int y = 0; y <= Y_GRID; ++y) {
-        glVertex2f(0.0f, static_cast<float>(y) * H);
-        glVertex2f(static_cast<float>(X_GRID) * H, static_cast<float>(y) * H);
+        glVertex2f(0.0f, static_cast<float>(y));
+        glVertex2f(static_cast<float>(X_GRID), static_cast<float>(y));
     }
     glEnd();
 }
