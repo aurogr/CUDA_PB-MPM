@@ -32,6 +32,10 @@ void Simulation::initialize() {
 
     Vector2f init_vel(0.0f, 0.0f);
 
+    ps.water.allocate();
+    ps.snow.allocate();
+    ps.elastic.allocate();
+
     if (initSphere) {
 
         init_pos.reserve(MAX_PARTICLES);
@@ -63,14 +67,6 @@ void Simulation::initialize() {
         else
             ps.elastic.initialize(particle_count, init_pos, init_displacement);
     }
-    else {
-        if (materialType == 0)
-            ps.water.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
-        else if(materialType == 1)
-            ps.snow.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
-        else
-            ps.elastic.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
-    }
 }
 
 void AddParticlesMidSim(SimulationParticles& ps, float dt, int materialType) {
@@ -86,12 +82,12 @@ void AddParticlesMidSim(SimulationParticles& ps, float dt, int materialType) {
         init_displacement.push_back(dt * init_vel);
     }
 
-    if (materialType == 0)
-        ps.water.addParticlesMidSimulation(init_pos, init_displacement);
-    else if (materialType == 1)
-        ps.snow.addParticlesMidSimulation(init_pos, init_displacement);
-    else
-        ps.elastic.addParticlesMidSimulation(init_pos, init_displacement);
+    //if (materialType == 0)
+        //ps.water.addParticlesMidSimulation(init_pos, init_displacement);
+    //else if (materialType == 1)
+       ps.snow.addParticlesMidSimulation(init_pos, init_displacement);
+    //else
+       // ps.elastic.addParticlesMidSimulation(init_pos, init_displacement);
 }
 
 void Simulation::step(float renderDt) {

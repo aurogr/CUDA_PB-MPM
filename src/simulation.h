@@ -19,7 +19,7 @@ private:
     bool isPaused = false;
     bool initSphere = true;
     bool addMidSim = true;
-    int materialType = 0; // 0 = water, 1 = snow, 2 = elastic, 3 = both TODO: CHANGE FOR PREPARED SCENES
+    int materialType = 2; // 0 = water, 1 = snow, 2 = elastic, 3 = both TODO: CHANGE FOR PREPARED SCENES
 
     // Constant variables
     const float gravity = 9.81f;

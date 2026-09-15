@@ -53,8 +53,7 @@ public:
         free();
     }
 
-    void initialize(int count, const std::vector<Vector2f>& h_Xp, const std::vector<Vector2f>& h_Xp_delta) {
-        num_particles = count;
+    void allocate() {
 
         cudaMalloc(&d_Mp, MAX_PARTICLES * sizeof(float));
         cudaMalloc(&d_Xp, MAX_PARTICLES * sizeof(Vector2f));
@@ -73,6 +72,10 @@ public:
             cudaMalloc(&d_Fe, MAX_PARTICLES * sizeof(Matrix2f));
             break;
         }
+    }
+
+    void initialize(int count, const std::vector<Vector2f>& h_Xp, const std::vector<Vector2f>& h_Xp_delta) {
+        num_particles = count;
 
         if (num_particles > 0) {
 

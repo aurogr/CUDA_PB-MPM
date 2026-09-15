@@ -7,6 +7,8 @@
 
 
 #pragma region Material
+
+#pragma region Water
 __device__ void computeDisplacementWater(const MaterialSettings& settings, const float Jp, Matrix2f& Dp) 
 {
     //(1) Viscosity: remove deviatoric part of deformation displacement
@@ -36,13 +38,16 @@ __device__ void updateDeformationWater(const MaterialSettings& settings, float& 
     Jp *= (1.0f + Dp.trace());
     Jp = fmaxf(Jp, 0.1f); // Never allow J <= 0
 }
+#pragma endregion
+
+#pragma region Snow
 __device__ void computeDisplacementSnow(const MaterialSettings& settings, const Matrix2f Fp, const Matrix2f Fe, Matrix2f& Dp)
 {
     // 1. Calculate exponential hardening from plastic volume change Jp
     float Jp = Fp.det();
     float hardening = expf(settings.hard_coeff * (1.0f - Jp));
     float reducedHardening = 1.0f + 0.1f * (hardening - 1.0f); // lerp baseline with 10% hardening force
-    float relaxation = fminf(settings.relaxation * reducedHardening, 0.4f);
+    float relaxation = fminf(settings.relaxation * hardening, 0.4f);
 
     // 2. Rigid rotation extraction
     Matrix2f U, V;
@@ -105,7 +110,9 @@ __device__ void updateDeformationSnow(const MaterialSettings& settings, Matrix2f
 
     Fp = Fp_new;
 }
+#pragma endregion
 
+#pragma region Elastic
 __device__ void computeDisplacementElastic(const MaterialSettings& settings, const Matrix2f Fe, Matrix2f& Dp)
 {
     // 1. Compute trial deformation gradient F_trial = (I + Dp) * Fe
@@ -157,6 +164,7 @@ __device__ void updateDeformationElastic(const MaterialSettings& mat, Matrix2f& 
 
     Fe = Fe_new;
 }
+#pragma endregion
 #pragma endregion
 
 #pragma region Collisions
