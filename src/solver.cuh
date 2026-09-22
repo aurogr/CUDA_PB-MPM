@@ -9,7 +9,7 @@
 /// <summary>
 /// Solve material constraints for each particle
 /// </summary>
-void solveConstraints(const ParticleSystem& ps);
+void solveConstraints(const ParticleSystem& ps, float snowRelaxation);
 
 /// <summary>
 /// Particle to grid. Transfer particle mass, momentum, and force (computed using stresses) to grid nodes using interpolation functions.

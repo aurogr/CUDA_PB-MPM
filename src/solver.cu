@@ -41,70 +41,64 @@ __device__ void updateDeformationWater(const MaterialSettings& settings, float& 
 #pragma endregion
 
 #pragma region Snow
-__device__ void computeDisplacementSnow(const MaterialSettings& settings, const Matrix2f Fp, const Matrix2f Fe, Matrix2f& Dp)
+__device__ void computeDisplacementSnow(const MaterialSettings& settings, const Matrix2f Fp, const Matrix2f Fe, Matrix2f& Dp, const float snowRelaxation)
 {
-    // 1. Calculate exponential hardening from plastic volume change Jp
-    float Jp = Fp.det();
-    float hardening = expf(settings.hard_coeff * (1.0f - Jp));
-    float reducedHardening = 1.0f + 0.1f * (hardening - 1.0f); // lerp baseline with 10% hardening force
-    float relaxation = fminf(settings.relaxation * hardening, 0.4f);
+    // 1. Trial deformation gradient
+    Matrix2f F_trial = (identity() + Dp) * Fe;
 
-    // 2. Rigid rotation extraction
+    // 2. Corotated elastic target
     Matrix2f U, V;
     Vector2f Sigma;
-    Fe.svd(&U, &Sigma, &V);
+    F_trial.svd(&U, &Sigma, &V);
+    Matrix2f A = U * V.transpose();
 
-    if (U.det() < 0.0f) { U.m01 = -U.m01; U.m11 = -U.m11; }
-    if (V.det() < 0.0f) { V.m01 = -V.m01; V.m11 = -V.m11; }
+    // 3. Elastric strain
+    Matrix2f target_D = A * Fe.inverse() - identity();
+    Matrix2f diff = target_D - Dp;
 
-    // Safe inverse for SVD
-    Vector2f invSigma(1.0f / fmaxf(Sigma.x, 1e-5f), 1.0f / fmaxf(Sigma.y, 1e-5f));
-    Matrix2f Fe_inv = V * Matrix2f(invSigma.x, 0.0f, 0.0f, invSigma.y) * U.transpose();
+    // 4. Disney hardening
+    float Jp = fmaxf(Fp.det(), 0.01f);
+    float hardening = expf(settings.hard_coeff * (1.0f - Jp));
 
-    Matrix2f Re = U * V.transpose();
-    Matrix2f D_shear = Re * Fe_inv - identity();
+    // 5. Apply hardening to PB-MPM relaxation (based on solver iteration)
+    float dynamic_relaxation = fminf(snowRelaxation * hardening, 1.0f);
 
-    // 3. Deviatoric shear damping
-    Matrix2f D_dev = Dp - 0.5f * Dp.trace() * identity();
-    Dp -= 0.1f * D_dev;
-
-    // 4. Volumetric displacement (Targeting Je = 1.0)
-    float Je = Fe.det();
-    float alpha = 0.5f * (1.0f / fmaxf(Je, 1e-4f) - Dp.trace() - 1.0f);
-    alpha = fminf(fmaxf(alpha, -2.0f), 2.0f); // Clamp extreme impulse
-
-    // 5. Combine displacement corrections
-    Dp += relaxation * (D_shear + alpha * identity());
+    // 6. Update displacement
+    Dp += diff * dynamic_relaxation;
 }
 
-__device__ void updateDeformationSnow(const MaterialSettings& settings, Matrix2f& Fp, Matrix2f& Fe, const Matrix2f Dp) {
-    // 1. Trial elastic deformation gradient
+__device__ void updateDeformationSnow(const MaterialSettings& settings, Matrix2f& Fp, Matrix2f& Fe, const Matrix2f Dp)
+{
+    // 1. Trial elastic deformation
     Matrix2f Fe_trial = (identity() + Dp) * Fe;
 
-    // 2. SVD to check yield condition
+    // 2. SVD to decompose elastic trial matrix
     Matrix2f U, V;
     Vector2f Sigma;
-    Fe_trial.svd(&U, &Sigma, &V); 
+    Fe_trial.svd(&U, &Sigma, &V);
 
-    // 3. Clamp plasticity values
-    Vector2f elasticSigma = Sigma.clamp(1.0f - settings.crit_compression, 1.0f + settings.crit_stretch);
+    // 3. Disney Yield Condition: Clamp elastic singular values 
+    Vector2f elasticSigma(
+        fminf(fmaxf(Sigma.x, 1.0f - settings.crit_compression), 1.0f + settings.crit_stretch),
+        fminf(fmaxf(Sigma.y, 1.0f - settings.crit_compression), 1.0f + settings.crit_stretch)
+    );
 
     // 4. Update elastic deformation Fe
     Fe = U.diag_product(elasticSigma) * V.transpose();
 
-    // 5. Update plastic deformation Fp
+    // 5. Accumulate yield excess into plastic deformation Fp
     Vector2f plasticRatio(
-        Sigma.x / fmaxf(elasticSigma.x, 1e-8f),
-        Sigma.y / fmaxf(elasticSigma.y, 1e-8f)
+        Sigma.x / fmaxf(elasticSigma.x, 1e-6f),
+        Sigma.y / fmaxf(elasticSigma.y, 1e-6f)
     );
-    Matrix2f Fp_yield = V.diag_product(plasticRatio) * V.transpose(); 
+    Matrix2f Fp_yield = V.diag_product(plasticRatio) * V.transpose();
     Matrix2f Fp_new = Fp_yield * Fp;
 
-    // 6. Plastic volume limit
+    // 6. Plastic volume limit safeguard
     float Jp_new = Fp_new.det();
-    const float min_Jp = 0.5f;
+    const float min_Jp = 0.2f;
     if (Jp_new < min_Jp) {
-        float scale = powf(min_Jp / fmaxf(Jp_new, 1e-6f), 0.15f);
+        float scale = sqrtf(min_Jp / fmaxf(Jp_new, 1e-6f));
         Fp_new *= scale;
     }
 
@@ -278,7 +272,7 @@ __device__ void pushOutOfCollider(Vector2f& Xp, Vector2f&Xp_delta, CollisionMana
 #pragma endregion
 
 #pragma region Solver
-__global__ void solveConstraints_kernel(MaterialType d_mat, MaterialSettings d_settings, float* d_Jp, Matrix2f* d_Fp, Matrix2f* d_Fe, Matrix2f* d_Dp, const int num_particles)
+__global__ void solveConstraints_kernel(MaterialType d_mat, MaterialSettings d_settings, float* d_Jp, Matrix2f* d_Fp, Matrix2f* d_Fe, Matrix2f* d_Dp, const int num_particles, const float snowRelaxation)
 {
     int p = blockIdx.x * blockDim.x + threadIdx.x;
     if (p >= num_particles) return;
@@ -288,7 +282,7 @@ __global__ void solveConstraints_kernel(MaterialType d_mat, MaterialSettings d_s
         computeDisplacementWater(d_settings, d_Jp[p], d_Dp[p]);
         break;
     case MaterialType::SNOW:
-        computeDisplacementSnow(d_settings, d_Fp[p], d_Fe[p], d_Dp[p]);
+        computeDisplacementSnow(d_settings, d_Fp[p], d_Fe[p], d_Dp[p], snowRelaxation);
         break;
     case MaterialType::ELASTIC:
         computeDisplacementElastic(d_settings, d_Fe[p], d_Dp[p]);
@@ -445,12 +439,12 @@ __global__ void integrateParticle_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, M
 
 #pragma region Host Solver Implementation
 
-void solveConstraints(const ParticleSystem& ps)
+void solveConstraints(const ParticleSystem& ps, float snowRelaxation)
 {
     int blockSize = 256;
     int gridSize = (ps.num_particles + blockSize - 1) / blockSize;
     solveConstraints_kernel <<<gridSize, blockSize >>>
-        (ps.type, ps.settings, ps.d_Jp, ps.d_Fp, ps.d_Fe, ps.d_Dp, ps.num_particles);
+        (ps.type, ps.settings, ps.d_Jp, ps.d_Fp, ps.d_Fe, ps.d_Dp, ps.num_particles, snowRelaxation);
 }
 
 void p2g(const ParticleSystem& ps, Grid& grid)

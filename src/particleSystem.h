@@ -19,8 +19,8 @@ struct MaterialSettings {
 
     // Snow specific
     float crit_compression = 0.025f;
-    float crit_stretch = 0.0075f;
-    float hard_coeff = 1.0f;
+    float crit_stretch = 0.025f;
+    float hard_coeff = 10.0f;
 
     // Elastic specific
     float elasticity_ratio = 0.9f;

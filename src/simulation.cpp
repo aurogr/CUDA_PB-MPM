@@ -82,12 +82,12 @@ void AddParticlesMidSim(SimulationParticles& ps, float dt, int materialType) {
         init_displacement.push_back(dt * init_vel);
     }
 
-    //if (materialType == 0)
-        //ps.water.addParticlesMidSimulation(init_pos, init_displacement);
-    //else if (materialType == 1)
+   if (materialType == 0)
+        ps.water.addParticlesMidSimulation(init_pos, init_displacement);
+    else if (materialType == 1)
        ps.snow.addParticlesMidSimulation(init_pos, init_displacement);
-    //else
-       // ps.elastic.addParticlesMidSimulation(init_pos, init_displacement);
+    else
+       ps.elastic.addParticlesMidSimulation(init_pos, init_displacement);
 }
 
 void Simulation::step(float renderDt) {
@@ -116,9 +116,9 @@ void Simulation::step(float renderDt) {
 
         // PB-MPM loop solver
         for (int i = 0; i < solverIterations; i++) {
-            if (ps.water.num_particles != 0) solveConstraints(ps.water);
-            if (ps.snow.num_particles != 0) solveConstraints(ps.snow);
-            if (ps.elastic.num_particles != 0) solveConstraints(ps.elastic);
+            if (ps.water.num_particles != 0) solveConstraints(ps.water, relaxation);
+            if (ps.snow.num_particles != 0) solveConstraints(ps.snow, relaxation);
+            if (ps.elastic.num_particles != 0) solveConstraints(ps.elastic, relaxation);
 
             grid.clear();
 
