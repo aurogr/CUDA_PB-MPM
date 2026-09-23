@@ -41,7 +41,7 @@ __device__ void updateDeformationWater(const MaterialSettings& settings, float& 
 #pragma endregion
 
 #pragma region Snow
-__device__ void computeDisplacementSnow(const MaterialSettings& settings, const Matrix2f Fp, const Matrix2f Fe, Matrix2f& Dp, const float snowRelaxation)
+__device__ void computeDisplacementSnow(const MaterialSettings& settings, const Matrix2f Fp, const Matrix2f Fe, Matrix2f& Dp)
 {
     // 1. Trial deformation gradient
     Matrix2f F_trial = (identity() + Dp) * Fe;
@@ -61,7 +61,7 @@ __device__ void computeDisplacementSnow(const MaterialSettings& settings, const 
     float hardening = expf(settings.hard_coeff * (1.0f - Jp));
 
     // 5. Apply hardening to PB-MPM relaxation (based on solver iteration)
-    float dynamic_relaxation = fminf(snowRelaxation * hardening, 1.0f);
+    float dynamic_relaxation = fminf(settings.relaxation * hardening, 1.0f);
 
     // 6. Update displacement
     Dp += diff * dynamic_relaxation;
@@ -272,7 +272,7 @@ __device__ void pushOutOfCollider(Vector2f& Xp, Vector2f&Xp_delta, CollisionMana
 #pragma endregion
 
 #pragma region Solver
-__global__ void solveConstraints_kernel(MaterialType d_mat, MaterialSettings d_settings, float* d_Jp, Matrix2f* d_Fp, Matrix2f* d_Fe, Matrix2f* d_Dp, const int num_particles, const float snowRelaxation)
+__global__ void solveConstraints_kernel(MaterialType d_mat, MaterialSettings d_settings, float* d_Jp, Matrix2f* d_Fp, Matrix2f* d_Fe, Matrix2f* d_Dp, const int num_particles)
 {
     int p = blockIdx.x * blockDim.x + threadIdx.x;
     if (p >= num_particles) return;
@@ -282,7 +282,7 @@ __global__ void solveConstraints_kernel(MaterialType d_mat, MaterialSettings d_s
         computeDisplacementWater(d_settings, d_Jp[p], d_Dp[p]);
         break;
     case MaterialType::SNOW:
-        computeDisplacementSnow(d_settings, d_Fp[p], d_Fe[p], d_Dp[p], snowRelaxation);
+        computeDisplacementSnow(d_settings, d_Fp[p], d_Fe[p], d_Dp[p]);
         break;
     case MaterialType::ELASTIC:
         computeDisplacementElastic(d_settings, d_Fe[p], d_Dp[p]);
@@ -439,12 +439,12 @@ __global__ void integrateParticle_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, M
 
 #pragma region Host Solver Implementation
 
-void solveConstraints(const ParticleSystem& ps, float snowRelaxation)
+void solveConstraints(const ParticleSystem& ps)
 {
     int blockSize = 256;
     int gridSize = (ps.num_particles + blockSize - 1) / blockSize;
     solveConstraints_kernel <<<gridSize, blockSize >>>
-        (ps.type, ps.settings, ps.d_Jp, ps.d_Fp, ps.d_Fe, ps.d_Dp, ps.num_particles, snowRelaxation);
+        (ps.type, ps.settings, ps.d_Jp, ps.d_Fp, ps.d_Fe, ps.d_Dp, ps.num_particles);
 }
 
 void p2g(const ParticleSystem& ps, Grid& grid)

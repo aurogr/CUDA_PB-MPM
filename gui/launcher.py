@@ -1,5 +1,6 @@
 import sys
 import os
+from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QFormLayout, 
     QSlider, QCheckBox, QPushButton, QTextEdit, QGroupBox, QLabel, QRadioButton, QTabWidget
@@ -7,15 +8,30 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QProcess, Qt
 
 class PyQT_gui(QWidget):
+    PARAM_GROUPS = {
+        "Water Settings": [
+            # (key, name, min_float, max_float, default_float, step)
+            ("water_relaxation",   "Relaxation",         0.5, 2.0, 1.5,  0.1),
+            ("viscosity",          "Viscosity",          0.0, 1.0, 0.05, 0.01),
+        ],
+        "Snow Settings": [
+            ("snow_relaxation",    "Relaxation",         0.5, 2.0, 1.5,  0.1),
+            ("crit_compression",   "Crit Compression",   0.0, 1.0, 0.025, 0.001),
+            ("crit_stretch",       "Crit Stretch",       0.0, 1.0, 0.025, 0.001),
+            ("hard_coeff",         "Hardening Coeff",    0.0, 20.0, 10.0, 0.1),
+        ],
+        "Elastic Settings": [
+            ("elastic_relaxation", "Relaxation",         0.5, 2.0, 1.5,  0.1),
+            ("elasticity_ratio",   "Elasticity Ratio",   0.0, 1.0, 1.0, 0.1),
+        ]
+    }
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PB-MPM SOLVER CONTROLLER")
       
-        # Place Python GUI on the left corner of the screen
-        gui_x = 50
-        gui_y = 100
-        gui_w = 400
-        gui_h = 540
+        # Window placement on screen
+        gui_x, gui_y, gui_w, gui_h = 50, 100, 400, 540
         self.setGeometry(gui_x, gui_y, gui_w, gui_h)
 
         # Calculate position for C++ OpenGL window (to the right of GUI)
@@ -24,11 +40,13 @@ class PyQT_gui(QWidget):
 
         # Start process
         self.process = QProcess(self) 
-        self.process.readyReadStandardOutput.connect(self.handle_stdout) # handle c++ cout from python
-        
-        # Add different tabs to main window
-        main_layout = QVBoxLayout()
+        self.process.readyReadStandardOutput.connect(self.handle_stdout)
+        self.process.readyReadStandardError.connect(self.handle_stderr)
+        self.process.started.connect(self.on_engine_started)
+        self.process.finished.connect(self.on_engine_finished)
 
+        # Build Tabbed Layout
+        main_layout = QVBoxLayout()
         self.tabs = QTabWidget()
 
         self.tab_sim = self.init_sim_ui()
@@ -36,21 +54,17 @@ class PyQT_gui(QWidget):
 
         self.tabs.addTab(self.tab_sim, "Simulation")
         self.tabs.addTab(self.tab_mat, "Materials")
-
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
         # Define main layout
         main_layout.addWidget(self.tabs)
         self.setLayout(main_layout)
 
-        # Detect when the C++ window/process closes
-        self.process.finished.connect(self.on_engine_finished)
-
     def init_sim_ui(self):
         tab = QWidget()
         layout = QVBoxLayout()
 
-        # Startup controls group
+        # Startup parameters group
         self.startup_group_box = QGroupBox("Startup simulation parameters")
         startup_layout = QFormLayout()
 
@@ -68,11 +82,9 @@ class PyQT_gui(QWidget):
         self.mat0.toggled.connect(lambda: self.on_mat_rb(self.mat0))
         
         self.mat1 = QRadioButton("Snow")
-        self.mat1.setChecked(False)
         self.mat1.toggled.connect(lambda: self.on_mat_rb(self.mat1))
         
         self.mat2 = QRadioButton("Elastic")
-        self.mat2.setChecked(False)
         self.mat2.toggled.connect(lambda: self.on_mat_rb(self.mat2))
 
         rb_layout.addWidget(self.mat0)
@@ -91,7 +103,7 @@ class PyQT_gui(QWidget):
         self.startup_group_box.setLayout(startup_layout)
         layout.addWidget(self.startup_group_box)
 
-        # Real time controls group
+        # Real-time parameters group
         running_group_box = QGroupBox("Real time simulation parameters")
         running_layout = QFormLayout()
         
@@ -100,7 +112,7 @@ class PyQT_gui(QWidget):
         self.add_mid_sim.stateChanged.connect(self.on_add_mid_sim)
 
         # 2. TimeStep Slider
-        self.timestep_label = QLabel("dt: 0.0005")
+        self.timestep_label = QLabel("dt: 0.0050")
         self.timestep_slider = QSlider(Qt.Horizontal)
         self.timestep_slider.setRange(1, 10)
         self.timestep_slider.setValue(5)
@@ -132,23 +144,6 @@ class PyQT_gui(QWidget):
         tab.setLayout(layout)
         return tab
 
-    PARAM_GROUPS = {
-        "Water Settings": [
-            ("water_relaxation",   "Relaxation",         0, 100, 90,  0.01),
-            ("viscosity",          "Viscosity",          0, 100, 0,   0.01),
-        ],
-        "Snow Settings": [
-            ("snow_relaxation",    "Relaxation",         0, 100, 50,  0.01),
-            ("crit_compression",   "Crit Compression",   0, 500, 25,  0.001),
-            ("crit_stretch",       "Crit Stretch",       0, 500, 75,  0.0001),
-            ("hard_coeff",         "Hardening Coeff",    0, 500, 10,  0.1),
-        ],
-        "Elastic Settings": [
-            ("elastic_relaxation", "Relaxation",         0, 100, 95,  0.01),
-            ("elasticity_ratio",   "Elasticity Ratio",   0, 100, 90,  0.01),
-        ]
-    }
-
     def init_mat_ui(self):
         tab = QWidget()
         layout = QVBoxLayout()
@@ -165,14 +160,21 @@ class PyQT_gui(QWidget):
             container = QWidget()
             form_layout = QFormLayout()
 
-            for key, name, min_v, max_v, default_v, scale in params:
+            for key, name, min_v, max_v, default_v, step in params:
+                # Convert float step into integer multiplier for QSlider
+                multiplier = int(round(1.0 / step))
+                slider_min = int(round(min_v * multiplier))
+                slider_max = int(round(max_v * multiplier))
+                slider_default = int(round(default_v * multiplier))
+
                 slider = QSlider(Qt.Horizontal)
-                slider.setRange(min_v, max_v)
-                slider.setValue(default_v)
+                slider.setRange(slider_min, slider_max)
+                slider.setValue(slider_default)
                 
-                val_label = QLabel(f"{default_v * scale:.4f}")
+                val_label = QLabel(f"{default_v:.4f}")
                 
-                self.sliders[key] = (slider, scale)
+                # Store slider along with its division multiplier
+                self.sliders[key] = (slider, multiplier)
                 self.labels[key] = val_label
 
                 slider.valueChanged.connect(self.on_send_material_settings)
@@ -186,13 +188,10 @@ class PyQT_gui(QWidget):
 
             # Toggle container visibility on check state change (collapses content, keeps header)
             group_box.toggled.connect(container.setVisible)
-
             layout.addWidget(group_box)
             self.param_group_boxes[group_name] = group_box
 
-        self.param_group_boxes["Water Settings"].setChecked(True)
-        self.param_group_boxes["Snow Settings"].setChecked(False)
-        self.param_group_boxes["Elastic Settings"].setChecked(False)
+        self.update_material_group_visibility()
 
         layout.addStretch()
         tab.setLayout(layout)
@@ -208,65 +207,71 @@ class PyQT_gui(QWidget):
 
     # Launch C++ .exe with starting arguments
     def start_engine(self):
-        from pathlib import Path
-
-        # Path
         project_root = Path(__file__).resolve().parent.parent
-        #exe_path = project_root / "build" / "Debug" / "CUDA_PB_MPM.exe"
         exe_path = project_root / "build" / "Release" / "CUDA_PB_MPM.exe"
 
         if not exe_path.exists():
             self.console.append(f"[ERROR] Binary not found at: {exe_path}")
             return
 
-        # Add arguments to process start
+        self.process.setWorkingDirectory(str(exe_path.parent))
+
         init_sphere_str = "1" if self.init_sphere.isChecked() else "0"
         add_mid_sim_str = "1" if self.add_mid_sim.isChecked() else "0"
         dt_val = self.timestep_slider.value() / 1000.0
-        is_paused_str = "1" if self.pause.isChecked() else "0"
+        is_paused_str = "0" # TODO: maybe fix current workaround which starts paused and unpauses when program starts #"1" if self.pause.isChecked() else "0"
         chosen_mat = 0 if self.mat0.isChecked() else 1 if self.mat1.isChecked() else 2
-        args = [str(self.sim_x), str(self.sim_y), init_sphere_str, add_mid_sim_str, str(dt_val), is_paused_str, str(chosen_mat)]
+        
+        args = [
+            str(self.sim_x), str(self.sim_y), 
+            init_sphere_str, add_mid_sim_str, 
+            f"{dt_val:.6f}", is_paused_str, str(chosen_mat)
+        ]
 
-        # Disable startup settings
         self.startup_group_box.setEnabled(False)
+        self.launch_btn.setEnabled(False)
 
-        # Convert Path object to string for QProcess
+        self.console.append(f"[INFO] Launching engine with args: {args}")
         self.process.start(str(exe_path), args)
 
-    # Handle events while simulation is running by passing commands
+    def on_engine_started(self):
+        self.console.append("[C++ Engine] Process started successfully.")
+        # TODO: Maybe fix current workound: to sync start paused and then unpause if needed
+        self.on_send_material_settings()
+        self.on_pause()
+
     def on_engine_finished(self, exit_code, exit_status):
         self.console.append(f"[C++ Engine] Closed with exit code: {exit_code}")
-
-        # Enable startup controls
         self.startup_group_box.setEnabled(True)
         self.launch_btn.setEnabled(True)
 
     def on_tab_changed(self, index):
         self.tabs.setCurrentIndex(index)
 
-    def on_add_mid_sim(self, value):   
+    def on_add_mid_sim(self, state):   
         if self.process.state() == QProcess.Running:
             add_mid_sim = 1 if self.add_mid_sim.isChecked() else 0
             command = f"MID_SIM {add_mid_sim}\n"
             self.process.write(command.encode("utf-8"))
 
-    def on_mat_rb(self, value):  
-        self.update_material_group_visibility();
+    def on_mat_rb(self, rb):  
+        if not rb.isChecked():
+            return
+        self.update_material_group_visibility()
         if self.process.state() == QProcess.Running:
             chosen_mat = 0 if self.mat0.isChecked() else 1 if self.mat1.isChecked() else 2
             command = f"MATERIAL_TYPE {chosen_mat}\n"
             self.process.write(command.encode("utf-8"))
+            self.on_send_material_settings()
 
     def on_timestep(self, value):   
         dt_val = value / 1000.0
         self.timestep_label.setText(f"dt: {dt_val:.4f}")
         if self.process.state() == QProcess.Running:
-            dt_val = value / 1000.0     
-            command = f"DT {dt_val}\n"
+            command = f"DT {dt_val:.6f}\n"
             self.process.write(command.encode("utf-8"))
 
     def on_pause(self, state):
-        self.on_send_material_settings() #TODO: This is just a quick fix so it initializes with material settings, but i need to change this
         if self.process.state() == QProcess.Running:
             is_paused = 1 if self.pause.isChecked() else 0
             command = f"PAUSE {is_paused}\n"
@@ -274,10 +279,11 @@ class PyQT_gui(QWidget):
 
     def on_send_material_settings(self):
         values = {}
-        for key, (slider, scale) in self.sliders.items():
-            val = slider.value() * scale
+        for key, (slider, multiplier) in self.sliders.items():
+            # Real float value = integer value / multiplier
+            val = slider.value() / float(multiplier)
             values[key] = val
-            self.labels[key].setText(f"{val:.4f}")
+            self.labels[key].setText(f"{val:.3f}")
 
         if self.process.state() != QProcess.Running:
             return
@@ -294,12 +300,12 @@ class PyQT_gui(QWidget):
 
         cmd = (
             f"SET_MAT_SETTINGS {chosen_mat} "
-            f"{relaxation_val:.4f} "
-            f"{values['viscosity']:.4f} "
-            f"{values['crit_compression']:.4f} "
-            f"{values['crit_stretch']:.4f} "
-            f"{values['hard_coeff']:.4f} "
-            f"{values['elasticity_ratio']:.4f}\n"
+            f"{relaxation_val:.3f} "
+            f"{values['viscosity']:.3f} "
+            f"{values['crit_compression']:.3f} "
+            f"{values['crit_stretch']:.3f} "
+            f"{values['hard_coeff']:.3f} "
+            f"{values['elasticity_ratio']:.3f}\n"
         )
 
         self.process.write(cmd.encode("utf-8"))
@@ -307,6 +313,10 @@ class PyQT_gui(QWidget):
     def handle_stdout(self):
         data = self.process.readAllStandardOutput().data().decode("utf-8")
         self.console.append(data.strip())
+
+    def handle_stderr(self):
+        data = self.process.readAllStandardError().data().decode("utf-8")
+        self.console.append(f"[C++ ERROR] {data.strip()}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

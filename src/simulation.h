@@ -24,7 +24,6 @@ private:
     // Constant variables
     const float gravity = 9.81f;
     const int solverIterations = 4;
-    const float relaxation = 1.0f / solverIterations;
 
 public:
     Simulation();

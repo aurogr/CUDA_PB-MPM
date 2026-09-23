@@ -116,9 +116,9 @@ void Simulation::step(float renderDt) {
 
         // PB-MPM loop solver
         for (int i = 0; i < solverIterations; i++) {
-            if (ps.water.num_particles != 0) solveConstraints(ps.water, relaxation);
-            if (ps.snow.num_particles != 0) solveConstraints(ps.snow, relaxation);
-            if (ps.elastic.num_particles != 0) solveConstraints(ps.elastic, relaxation);
+            if (ps.water.num_particles != 0) solveConstraints(ps.water);
+            if (ps.snow.num_particles != 0) solveConstraints(ps.snow);
+            if (ps.elastic.num_particles != 0) solveConstraints(ps.elastic);
 
             grid.clear();
 
