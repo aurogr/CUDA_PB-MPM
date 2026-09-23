@@ -219,7 +219,7 @@ class PyQT_gui(QWidget):
         init_sphere_str = "1" if self.init_sphere.isChecked() else "0"
         add_mid_sim_str = "1" if self.add_mid_sim.isChecked() else "0"
         dt_val = self.timestep_slider.value() / 1000.0
-        is_paused_str = "0" # TODO: maybe fix current workaround which starts paused and unpauses when program starts #"1" if self.pause.isChecked() else "0"
+        is_paused_str = "1" # TODO: maybe fix current workaround which starts paused and unpauses when program starts #"1" if self.pause.isChecked() else "0"
         chosen_mat = 0 if self.mat0.isChecked() else 1 if self.mat1.isChecked() else 2
         
         args = [
@@ -271,7 +271,7 @@ class PyQT_gui(QWidget):
             command = f"DT {dt_val:.6f}\n"
             self.process.write(command.encode("utf-8"))
 
-    def on_pause(self, state):
+    def on_pause(self):
         if self.process.state() == QProcess.Running:
             is_paused = 1 if self.pause.isChecked() else 0
             command = f"PAUSE {is_paused}\n"
