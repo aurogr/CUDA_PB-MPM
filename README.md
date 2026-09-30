@@ -3,12 +3,15 @@ Position Based Material Point Method solver from EA Siggraph 2024 paper done wit
 
 ## Development roadmap
 ### Phase 1. Explicit MPM
-The first phase of the project is understanding the logic behind MPM. For that, we have a CUDA solver and a simple visualizer with OpenGL.
+The first phase of the project is understanding the logic behind MPM. For that, we have a 2D CUDA solver and a simple visualizer with OpenGL.
 
-### Phase 2. PB-MPM (current phase)
+### Phase 2. 2D PB-MPM
 We have left the pure explicit MPM solution on a branch, and moved to a PB-MPM CUDA solver, again with a simple visualizer with OpenGL.
 
-### Phase 3. Vulkan visualizer (expected)
+### Phase 3. 3D PB-MPM (current phase)
+With Snow, Water and Elastic working for PB-MPM, we have left the 2D code on a branch and switched to a 3D solver.
+
+### Phase 4. Vulkan visualizer (expected)
 
 ## Instructions.
 A `CMakeLists.txt` file is added to create the build and `.exe` on Visual Studio.
