@@ -20,10 +20,8 @@ const static double H = 1.0;
 const static int X_WINDOW = 1080; // Window size
 const static int Y_WINDOW = X_WINDOW * Y_GRID / X_GRID;
 
-const static double RENDER_DT = 0.016; // 60 FPS
-
 /* ----- SIMULATION ----- */
-inline constexpr int MAX_PARTICLES = 15000;
+inline constexpr int MAX_PARTICLES = 30000;
 
 /* ----- QUADRATIC INTERPOLATION ----- */
 const static float INT_CELL_SPAN = 1.5f;

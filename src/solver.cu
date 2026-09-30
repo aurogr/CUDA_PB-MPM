@@ -7,6 +7,8 @@
 
 
 #pragma region Material
+
+#pragma region Water
 __device__ void computeDisplacementWater(const MaterialSettings& settings, const float Jp, Matrix2f& Dp) 
 {
     //(1) Viscosity: remove deviatoric part of deformation displacement
@@ -36,106 +38,101 @@ __device__ void updateDeformationWater(const MaterialSettings& settings, float& 
     Jp *= (1.0f + Dp.trace());
     Jp = fmaxf(Jp, 0.1f); // Never allow J <= 0
 }
+#pragma endregion
+
+#pragma region Snow
 __device__ void computeDisplacementSnow(const MaterialSettings& settings, const Matrix2f Fp, const Matrix2f Fe, Matrix2f& Dp)
 {
-    // 1. Calculate exponential hardening from plastic volume change Jp
-    float Jp = Fp.det();
-    float hardening = expf(settings.hard_coeff * (1.0f - Jp));
-    float reducedHardening = 1.0f + 0.1f * (hardening - 1.0f); // lerp baseline with 10% hardening force
-    float relaxation = fminf(settings.relaxation * reducedHardening, 0.4f);
+    // 1. Trial deformation gradient
+    Matrix2f F_trial = (identity() + Dp) * Fe;
 
-    // 2. Rigid rotation extraction
+    // 2. Corotated elastic target
     Matrix2f U, V;
     Vector2f Sigma;
-    Fe.svd(&U, &Sigma, &V);
+    F_trial.svd(&U, &Sigma, &V);
+    Matrix2f A = U * V.transpose();
 
-    if (U.det() < 0.0f) { U.m01 = -U.m01; U.m11 = -U.m11; }
-    if (V.det() < 0.0f) { V.m01 = -V.m01; V.m11 = -V.m11; }
+    // 3. Elastric strain
+    Matrix2f target_D = A * Fe.inverse() - identity();
+    Matrix2f diff = target_D - Dp;
 
-    // Safe inverse for SVD
-    Vector2f invSigma(1.0f / fmaxf(Sigma.x, 1e-5f), 1.0f / fmaxf(Sigma.y, 1e-5f));
-    Matrix2f Fe_inv = V * Matrix2f(invSigma.x, 0.0f, 0.0f, invSigma.y) * U.transpose();
+    // 4. Disney hardening
+    float Jp = fmaxf(Fp.det(), 0.01f);
+    float hardening = expf(settings.hard_coeff * (1.0f - Jp));
 
-    Matrix2f Re = U * V.transpose();
-    Matrix2f D_shear = Re * Fe_inv - identity();
+    // 5. Apply hardening to PB-MPM relaxation (based on solver iteration)
+    float dynamic_relaxation = fminf(settings.relaxation * hardening, 1.0f);
 
-    // 3. Deviatoric shear damping
-    Matrix2f D_dev = Dp - 0.5f * Dp.trace() * identity();
-    Dp -= 0.1f * D_dev;
-
-    // 4. Volumetric displacement (Targeting Je = 1.0)
-    float Je = Fe.det();
-    float alpha = 0.5f * (1.0f / fmaxf(Je, 1e-4f) - Dp.trace() - 1.0f);
-    alpha = fminf(fmaxf(alpha, -2.0f), 2.0f); // Clamp extreme impulse
-
-    // 5. Combine displacement corrections
-    Dp += relaxation * (D_shear + alpha * identity());
+    // 6. Update displacement
+    Dp += diff * dynamic_relaxation;
 }
 
-__device__ void updateDeformationSnow(const MaterialSettings& settings, Matrix2f& Fp, Matrix2f& Fe, const Matrix2f Dp) {
-    // 1. Trial elastic deformation gradient
+__device__ void updateDeformationSnow(const MaterialSettings& settings, Matrix2f& Fp, Matrix2f& Fe, const Matrix2f Dp)
+{
+    // 1. Trial elastic deformation
     Matrix2f Fe_trial = (identity() + Dp) * Fe;
 
-    // 2. SVD to check yield condition
+    // 2. SVD to decompose elastic trial matrix
     Matrix2f U, V;
     Vector2f Sigma;
-    Fe_trial.svd(&U, &Sigma, &V); 
+    Fe_trial.svd(&U, &Sigma, &V);
 
-    // 3. Clamp plasticity values
-    Vector2f elasticSigma = Sigma.clamp(1.0f - settings.crit_compression, 1.0f + settings.crit_stretch);
+    // 3. Disney Yield Condition: Clamp elastic singular values 
+    Vector2f elasticSigma(
+        fminf(fmaxf(Sigma.x, 1.0f - settings.crit_compression), 1.0f + settings.crit_stretch),
+        fminf(fmaxf(Sigma.y, 1.0f - settings.crit_compression), 1.0f + settings.crit_stretch)
+    );
 
     // 4. Update elastic deformation Fe
     Fe = U.diag_product(elasticSigma) * V.transpose();
 
-    // 5. Update plastic deformation Fp
+    // 5. Accumulate yield excess into plastic deformation Fp
     Vector2f plasticRatio(
-        Sigma.x / fmaxf(elasticSigma.x, 1e-8f),
-        Sigma.y / fmaxf(elasticSigma.y, 1e-8f)
+        Sigma.x / fmaxf(elasticSigma.x, 1e-6f),
+        Sigma.y / fmaxf(elasticSigma.y, 1e-6f)
     );
-    Matrix2f Fp_yield = V.diag_product(plasticRatio) * V.transpose(); 
+    Matrix2f Fp_yield = V.diag_product(plasticRatio) * V.transpose();
     Matrix2f Fp_new = Fp_yield * Fp;
 
-    // 6. Plastic volume limit
+    // 6. Plastic volume limit safeguard
     float Jp_new = Fp_new.det();
-    const float min_Jp = 0.5f;
+    const float min_Jp = 0.2f;
     if (Jp_new < min_Jp) {
-        float scale = powf(min_Jp / fmaxf(Jp_new, 1e-6f), 0.15f);
+        float scale = sqrtf(min_Jp / fmaxf(Jp_new, 1e-6f));
         Fp_new *= scale;
     }
 
     Fp = Fp_new;
 }
+#pragma endregion
 
+#pragma region Elastic
 __device__ void computeDisplacementElastic(const MaterialSettings& settings, const Matrix2f Fe, Matrix2f& Dp)
 {
+    // Formula based on EA's paper is: D = Fe^-1 * A - I (in spatial space: D = A * Fe^-1)
+    
     // 1. Compute trial deformation gradient F_trial = (I + Dp) * Fe
     Matrix2f F_trial = (identity() + Dp) * Fe;
 
-    // 2. Extract rigid rotation target (A_shape) via SVD (safe Polar Decomposition)
+    // 2. We need to find matrix A which is the closest matrix to F_trial with determinant = 1
+    // 2.1 Shape preservation: extract rigid rotation target (A_shape) via SVD (safe Polar Decomposition)
     Matrix2f U, V;
     Vector2f Sigma;
     F_trial.svd(&U, &Sigma, &V);
     Matrix2f A_shape = U * V.transpose();
-
-    // 3. Compute volume-preserving target (A_vol) with det == 1.0
+    // 2.2. Volume preservation: compute volume-preserving target (A_vol) with det == 1.0
+    // A_vol = F/det(F) but that needs to be reestructured a little for n dimensions
+    // s * det(F) = 1 so s = 1/det(F); s^2 * det(F) = 1 so s = 1/ sqrt(det(F)); s^3 * det(F) = 1 so s = 1 / cbrt(det(F))
     float df = F_trial.det();
-    float sign_df = (df < 0.0f) ? -1.0f : 1.0f;
-    float cdf = fminf(fmaxf(fabsf(df), 0.1f), 1000.0f); // CUDA float bounds clamp
-    Matrix2f A_vol = (1.0f / (sign_df * sqrtf(cdf))) * F_trial;
+    float sign = (df < 0.0f) ? -1.0f : 1.0f;
+    float cdf = fminf(fmaxf(fabsf(df), 0.1f), 1000.0f);
+    float scale = 1.0f / (sign * sqrtf(cdf));
+    Matrix2f A_vol = scale * F_trial;
+    // 2.3. Constraints are not orthogonal so we introduce an interpolating factor
+    Matrix2f A = settings.elasticity_ratio * A_shape + (1.0f - settings.elasticity_ratio) * A_vol;
 
-    // 4. Blend shape restoration and volume retention
-    float alpha = settings.elasticity_ratio; // Ratio between shape (1.0) and volume (0.0)
-    Matrix2f A_tgt = alpha * A_shape + (1.0f - alpha) * A_vol;
-
-    // 5. Safe inverse of Fe using SVD decomposition to prevent NaN on collapsed particles
-    Matrix2f Fe_U, Fe_V;
-    Vector2f Fe_Sigma;
-    Fe.svd(&Fe_U, &Fe_Sigma, &Fe_V);
-    Vector2f invFeSigma(1.0f / fmaxf(Fe_Sigma.x, 1e-5f), 1.0f / fmaxf(Fe_Sigma.y, 1e-5f));
-    Matrix2f Fe_inv = Fe_V * Matrix2f(invFeSigma.x, 0.0f, 0.0f, invFeSigma.y) * Fe_U.transpose();
-
-    // 6. Convert target deformation back to displacement step
-    Matrix2f target_D = A_tgt * Fe_inv - identity();
+    // 3. Calculate target deformation and add the different to the displacement scaled by relaxation
+    Matrix2f target_D = A * Fe.inverse() - identity();
     Dp += settings.relaxation * (target_D - Dp);
 }
 
@@ -144,19 +141,17 @@ __device__ void updateDeformationElastic(const MaterialSettings& mat, Matrix2f& 
     // 1. Advance deformation gradient
     Matrix2f Fe_new = (identity() + Dp) * Fe;
 
-    // // 2. Per-axis singular value clamping (prevents individual axis collapse)
+    // 2. Use SVD to clamp values
     Matrix2f U, V;
     Vector2f Sigma;
     Fe_new.svd(&U, &Sigma, &V);
 
-    Sigma.x = fmaxf(Sigma.x, 1e-2f);
-    Sigma.y = fmaxf(Sigma.y, 1e-2f);
+    Sigma.x = fminf(fmaxf(Sigma.x, 0.2f), 1000.0f);
+    Sigma.y = fminf(fmaxf(Sigma.y, 0.2f), 1000.0f);
 
-    Matrix2f Sigma_diag = { Sigma.x, 0.0f, 0.0f, Sigma.y };
-    Fe_new = U * Sigma_diag * V.transpose();
-
-    Fe = Fe_new;
+    Fe = U.diag_product(Sigma) * V.transpose();
 }
+#pragma endregion
 #pragma endregion
 
 #pragma region Collisions

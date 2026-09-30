@@ -1,5 +1,7 @@
 #include <cuda_runtime.h>
 
+#include <random>
+
 #include "simulation.h"
 #include "constants.h"
 #include "solver.cuh"
@@ -32,8 +34,11 @@ void Simulation::initialize() {
 
     Vector2f init_vel(0.0f, 0.0f);
 
-    if (initSphere) {
+    ps.water.allocate();
+    ps.snow.allocate();
+    ps.elastic.allocate();
 
+    if (initSphere) {
         init_pos.reserve(MAX_PARTICLES);
         init_displacement.reserve(MAX_PARTICLES);
 
@@ -42,11 +47,19 @@ void Simulation::initialize() {
         float radius = 20.0f; // Size of sphere
         float spacing = CELL_SPACING; // Distance between particles
 
-        // Generate particles in a circle
+        std::mt19937 gen(1337);
+        float jitterAmount = 0.35f * spacing;
+        std::uniform_real_distribution<float> dist(-jitterAmount, jitterAmount);
+
+        // Generate particles in a circle with jitter
         for (float x = -radius; x <= radius; x += spacing) {
             for (float y = -radius; y <= radius; y += spacing) {
                 if (x * x + y * y <= radius * radius) {
-                    init_pos.push_back(Vector2f(center.x + x, center.y + y));
+                    // Apply jitter offset to position
+                    float px = center.x + x + dist(gen);
+                    float py = center.y + y + dist(gen);
+
+                    init_pos.push_back(Vector2f(px, py));
                     init_displacement.push_back(physicsDt * init_vel);
                 }
             }
@@ -54,22 +67,12 @@ void Simulation::initialize() {
 
         int particle_count = static_cast<int>(init_pos.size());
 
-        // Pass the corrected values into your particle system initialization
-
-        if(materialType == 0)
+        if (materialType == 0)
             ps.water.initialize(particle_count, init_pos, init_displacement);
         else if (materialType == 1)
             ps.snow.initialize(particle_count, init_pos, init_displacement);
         else
             ps.elastic.initialize(particle_count, init_pos, init_displacement);
-    }
-    else {
-        if (materialType == 0)
-            ps.water.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
-        else if(materialType == 1)
-            ps.snow.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
-        else
-            ps.elastic.initialize(static_cast<int>(init_pos.size()), init_pos, init_displacement);
     }
 }
 
@@ -86,12 +89,12 @@ void AddParticlesMidSim(SimulationParticles& ps, float dt, int materialType) {
         init_displacement.push_back(dt * init_vel);
     }
 
-    if (materialType == 0)
+   if (materialType == 0)
         ps.water.addParticlesMidSimulation(init_pos, init_displacement);
     else if (materialType == 1)
-        ps.snow.addParticlesMidSimulation(init_pos, init_displacement);
+       ps.snow.addParticlesMidSimulation(init_pos, init_displacement);
     else
-        ps.elastic.addParticlesMidSimulation(init_pos, init_displacement);
+       ps.elastic.addParticlesMidSimulation(init_pos, init_displacement);
 }
 
 void Simulation::step(float renderDt) {
