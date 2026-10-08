@@ -18,12 +18,12 @@ private:
     float physicsDt = 0.001f;
     bool isPaused = false;
     bool initSphere = true;
-    bool addMidSim = true;
-    int materialType = 1; // 0 = water, 1 = snow, 2 = elastic, 3 = both TODO: CHANGE FOR PREPARED SCENES
+    bool addMidSim = false;
+    int materialType = 0; // 0 = water, 1 = snow, 2 = elastic, 3 = both TODO: CHANGE FOR PREPARED SCENES
 
     // Constant variables
     const float gravity = 9.81f;
-    const int solverIterations = 4;
+    const int solverIterations = 2;
 
 public:
     Simulation();
@@ -36,6 +36,7 @@ public:
 
 #pragma region Getters
     const SimulationParticles& getParticles() const { return ps; }
+    const int getParticlesCount() { return ps.getParticlesCount(); }
     const CollisionManager& getCollisionManager() const { return collisionManager; }
 #pragma endregion
 

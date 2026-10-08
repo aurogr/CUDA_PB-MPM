@@ -28,6 +28,7 @@ struct MaterialSettings {
 
 class ParticleSystem {
 public:
+ 
     int num_particles = 0;
     MaterialType type;
 
@@ -36,14 +37,14 @@ public:
 
     // --- Common GPU Pointers ---
     float* d_Mp = nullptr;
-    Vector2f* d_Xp = nullptr;
-    Vector2f* d_Xp_delta = nullptr;
-    Matrix2f* d_Dp = nullptr;
+    Vector3f* d_Xp = nullptr;
+    Vector3f* d_Xp_delta = nullptr;
+    Matrix3f* d_Dp = nullptr;
 
     // --- Material-Specific GPU Pointers ---
     float* d_Jp = nullptr;       // Water
-    Matrix2f* d_Fe = nullptr;    // Snow & Elastic
-    Matrix2f* d_Fp = nullptr;    // Snow
+    Matrix3f* d_Fe = nullptr;    // Snow & Elastic
+    Matrix3f* d_Fp = nullptr;    // Snow
 
     ParticleSystem(MaterialType matType) {
         type = matType;
@@ -56,36 +57,38 @@ public:
     void allocate() {
 
         cudaMalloc(&d_Mp, MAX_PARTICLES * sizeof(float));
-        cudaMalloc(&d_Xp, MAX_PARTICLES * sizeof(Vector2f));
-        cudaMalloc(&d_Xp_delta, MAX_PARTICLES * sizeof(Vector2f));
-        cudaMalloc(&d_Dp, MAX_PARTICLES * sizeof(Matrix2f));
+        cudaMalloc(&d_Xp, MAX_PARTICLES * sizeof(Vector3f));
+        cudaMalloc(&d_Xp_delta, MAX_PARTICLES * sizeof(Vector3f));
+        cudaMalloc(&d_Dp, MAX_PARTICLES * sizeof(Matrix3f));
 
         switch (type) {
         case MaterialType::WATER:
             cudaMalloc(&d_Jp, MAX_PARTICLES * sizeof(float));
             break;
         case MaterialType::SNOW:
-            cudaMalloc(&d_Fp, MAX_PARTICLES * sizeof(Matrix2f));
-            cudaMalloc(&d_Fe, MAX_PARTICLES * sizeof(Matrix2f));
+            cudaMalloc(&d_Fp, MAX_PARTICLES * sizeof(Matrix3f));
+            cudaMalloc(&d_Fe, MAX_PARTICLES * sizeof(Matrix3f));
             break;
         case MaterialType::ELASTIC:
-            cudaMalloc(&d_Fe, MAX_PARTICLES * sizeof(Matrix2f));
+            cudaMalloc(&d_Fe, MAX_PARTICLES * sizeof(Matrix3f));
             break;
         }
     }
 
-    void initialize(int count, const std::vector<Vector2f>& h_Xp, const std::vector<Vector2f>& h_Xp_delta) {
+    void initialize(int count, const std::vector<Vector3f>& h_Xp, const std::vector<Vector3f>& h_Xp_delta) {
         num_particles = count;
 
         if (num_particles > 0) {
 
+            std::vector<uint32_t> h_keys(num_particles, 0);
+            std::vector<int> h_indices(num_particles, 0);
             std::vector<float> h_Mp(num_particles, COMPUTED_MP0);
-            std::vector<Matrix2f> h_Dp(num_particles, Matrix2f(0, 0, 0, 0));
+            std::vector<Matrix3f> h_Dp(num_particles, Matrix3f());
 
             cudaMemcpy(d_Mp, h_Mp.data(), num_particles * sizeof(float), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_Xp, h_Xp.data(), num_particles * sizeof(Vector2f), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_Xp_delta, h_Xp_delta.data(), num_particles * sizeof(Vector2f), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_Dp, h_Dp.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_Xp, h_Xp.data(), num_particles * sizeof(Vector3f), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_Xp_delta, h_Xp_delta.data(), num_particles * sizeof(Vector3f), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_Dp, h_Dp.data(), num_particles * sizeof(Matrix3f), cudaMemcpyHostToDevice);
 
             switch (type) {
                 case MaterialType::WATER: {
@@ -94,21 +97,21 @@ public:
                     break;
                 }
                 case MaterialType::SNOW: {
-                    std::vector<Matrix2f> h_F(num_particles, identity());
-                    cudaMemcpy(d_Fp, h_F.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-                    cudaMemcpy(d_Fe, h_F.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+                    std::vector<Matrix3f> h_F(num_particles, identity());
+                    cudaMemcpy(d_Fp, h_F.data(), num_particles * sizeof(Matrix3f), cudaMemcpyHostToDevice);
+                    cudaMemcpy(d_Fe, h_F.data(), num_particles * sizeof(Matrix3f), cudaMemcpyHostToDevice);
                     break;
                 }
                 case MaterialType::ELASTIC: {
-                    std::vector<Matrix2f> h_Fe(num_particles, identity());
-                    cudaMemcpy(d_Fe, h_Fe.data(), num_particles * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+                    std::vector<Matrix3f> h_Fe(num_particles, identity());
+                    cudaMemcpy(d_Fe, h_Fe.data(), num_particles * sizeof(Matrix3f), cudaMemcpyHostToDevice);
                     break;
                 }
             }
         }
     }
 
-    void addParticlesMidSimulation(const std::vector<Vector2f>& new_pos, const std::vector<Vector2f>& new_displacement) {
+    void addParticlesMidSimulation(const std::vector<Vector3f>& new_pos, const std::vector<Vector3f>& new_displacement) {
         int add_count = static_cast<int>(new_pos.size());
         if (add_count == 0) return;
 
@@ -122,13 +125,13 @@ public:
 
         // Create new batch of vectors
         std::vector<float> h_Mp(add_count, COMPUTED_MP0);
-        std::vector<Matrix2f> h_Dp(add_count, Matrix2f(0, 0, 0, 0));
+        std::vector<Matrix3f> h_Dp(add_count, Matrix3f());
 
         // Upload the new batch to memory, at the end of the last used position, on the reserved space
         cudaMemcpy(d_Mp + offset, h_Mp.data(), add_count * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_Xp + offset, new_pos.data(), add_count * sizeof(Vector2f), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_Xp_delta + offset, new_displacement.data(), add_count * sizeof(Vector2f), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_Dp + offset, h_Dp.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_Xp + offset, new_pos.data(), add_count * sizeof(Vector3f), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_Xp_delta + offset, new_displacement.data(), add_count * sizeof(Vector3f), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_Dp + offset, h_Dp.data(), add_count * sizeof(Matrix3f), cudaMemcpyHostToDevice);
 
         // Update count
         num_particles += add_count;
@@ -140,27 +143,22 @@ public:
             break;
         }
         case MaterialType::SNOW: {
-            std::vector<Matrix2f> h_F(add_count, identity());
-            cudaMemcpy(d_Fp + offset, h_F.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_Fe + offset, h_F.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+            std::vector<Matrix3f> h_F(add_count, identity());
+            cudaMemcpy(d_Fp + offset, h_F.data(), add_count * sizeof(Matrix3f), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_Fe + offset, h_F.data(), add_count * sizeof(Matrix3f), cudaMemcpyHostToDevice);
             break;
         }
         case MaterialType::ELASTIC: {
-            std::vector<Matrix2f> h_Fe(add_count, identity());
-            cudaMemcpy(d_Fe + offset, h_Fe.data(), add_count * sizeof(Matrix2f), cudaMemcpyHostToDevice);
+            std::vector<Matrix3f> h_Fe(add_count, identity());
+            cudaMemcpy(d_Fe + offset, h_Fe.data(), add_count * sizeof(Matrix3f), cudaMemcpyHostToDevice);
             break;
         }
         }
     }
 
     void free() {
-        cudaFree(d_Mp);
-        cudaFree(d_Xp);  
-        cudaFree(d_Xp_delta); 
-        cudaFree(d_Dp);
-        cudaFree(d_Jp);
-        cudaFree(d_Fp);
-        cudaFree(d_Fe);
+        cudaFree(d_Xp); cudaFree(d_Xp_delta); cudaFree(d_Mp);
+        cudaFree(d_Dp); cudaFree(d_Jp); cudaFree(d_Fp); cudaFree(d_Fe);
     }
 };
 

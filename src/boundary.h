@@ -2,8 +2,8 @@
 
 struct CollisionObjectData {
     int type; // 0 = sphere, 1 = box
-    Vector2f center;
-    Vector2f size;
+    Vector3f center;
+    Vector3f size;
     float rotation;
     float friction;
 };
@@ -19,12 +19,12 @@ public:
     CollisionObjectData* d_objects = nullptr;
     int count = 0;
 
-    void addSphere(Vector2f center, float radius, float friction) {
-        h_objects.push_back({ 0, center, Vector2f(radius, radius), 0.0f, friction });
+    void addSphere(Vector3f center, float radius, float friction) {
+        h_objects.push_back({ 0, center, Vector3f(radius, radius, radius), 0.0f, friction });
         count = static_cast<int>(h_objects.size());
     }
 
-    void addBox(Vector2f center, Vector2f size, float rotation, float friction) {
+    void addBox(Vector3f center, Vector3f size, float rotation, float friction) {
         h_objects.push_back({ 1, center, size, rotation, friction });
         count = static_cast<int>(h_objects.size());
     }

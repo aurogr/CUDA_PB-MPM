@@ -49,6 +49,11 @@ class PyQT_gui(QWidget):
         main_layout = QVBoxLayout()
         self.tabs = QTabWidget()
 
+        self.stats_label = QLabel("FPS: -- | Particles: --")
+        self.stats_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #2e8b57; padding: 5px;")
+        self.stats_label.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(self.stats_label)
+
         self.tab_sim = self.init_sim_ui()
         self.tab_mat = self.init_mat_ui()
 
@@ -312,7 +317,20 @@ class PyQT_gui(QWidget):
         
     def handle_stdout(self):
         data = self.process.readAllStandardOutput().data().decode("utf-8")
-        self.console.append(data.strip())
+        lines = data.strip().split('\n')
+        
+        for line in lines:
+            if not line:
+                continue
+            
+            if line.startswith("STATS"):
+                parts = line.split()
+                if len(parts) >= 3:
+                    fps = parts[1]
+                    particles = parts[2]
+                    self.stats_label.setText(f"FPS: {fps} | Particles: {particles}")
+            else:
+                self.console.append(line)
 
     def handle_stderr(self):
         data = self.process.readAllStandardError().data().decode("utf-8")

@@ -1,27 +1,25 @@
 #pragma once
 
 /* ----- GRID ----- */
-const static int X_GRID = 100; // Size of the domain
-const static int Y_GRID = 50;
+inline constexpr int X_GRID = 50; // Size of the domain
+inline constexpr int Y_GRID = 25;
+inline constexpr int Z_GRID = 25;
 
-const static int PARTICLES_PER_CELL_AXIS = 2;
+inline constexpr float CELL_SPACING = 0.5f; // In 3D thats 8 particles per cell
 
-const static float CELL_SPACING = 1.0 / PARTICLES_PER_CELL_AXIS;
+inline constexpr float COMPUTED_VP0 = CELL_SPACING * CELL_SPACING * CELL_SPACING;
 
-const static float COMPUTED_VP0 = CELL_SPACING * CELL_SPACING;
-
-const static float COMPUTED_MP0 = 1.0 * COMPUTED_VP0; // density set to 1.0
+inline constexpr float COMPUTED_MP0 = 1.0f * COMPUTED_VP0; // density set to 1.0
 
 // for simplicity we are gonna stablish that the cell size is 1.0 so that we can omit it from the code
-const static double H = 1.0; 
-//const static double H_INV = 1.0;
+inline constexpr float H = 1.0f;
 
 /* ----- RENDERING ----- */
-const static int X_WINDOW = 1080; // Window size
-const static int Y_WINDOW = X_WINDOW * Y_GRID / X_GRID;
+inline constexpr int X_WINDOW = 1080; // Window size
+inline constexpr int Y_WINDOW = X_WINDOW * Y_GRID / X_GRID;
 
 /* ----- SIMULATION ----- */
-inline constexpr int MAX_PARTICLES = 30000;
+inline constexpr int MAX_PARTICLES = 300000;
 
 /* ----- QUADRATIC INTERPOLATION ----- */
-const static float INT_CELL_SPAN = 1.5f;
+inline constexpr float INT_CELL_SPAN = 1.5f;

@@ -14,25 +14,30 @@ Simulation::~Simulation() {
 }
 
 void Simulation::initialize() {
-    grid.initialize(X_GRID, Y_GRID);
+    grid.initialize(X_GRID, Y_GRID, Z_GRID);
 
-    // Add collision objects
+    // Add collision objects (3D boundaries and obstacle spheres)
     float wallThickness = 2.0f;
     float wall_friction = 0.2f;
 
-    collisionManager.addBox(Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f), Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f), 0.0f, wall_friction);
-    collisionManager.addBox(Vector2f(X_GRID - wallThickness * 0.5f, Y_GRID * 0.5f), Vector2f(wallThickness * 0.5f, Y_GRID * 0.5f), 0.0f, wall_friction);
-    collisionManager.addBox(Vector2f(X_GRID * 0.5f, wallThickness * 0.5f), Vector2f(X_GRID * 0.5f, wallThickness * 0.5f), 0.0f, wall_friction);
-    collisionManager.addBox(Vector2f(X_GRID * 0.5f, Y_GRID - wallThickness * 0.5f), Vector2f(X_GRID * 0.5f, wallThickness * 0.5f), 0.0f, wall_friction);
-    collisionManager.addSphere(Vector2f(20.0f, 35.0f), 4.0f, .3f);
-    collisionManager.addSphere(Vector2f(80.0f, 15.0f), 8.0f, .3f);
+    // 6 Domain Boundary Boxes
+    collisionManager.addBox(Vector3f(wallThickness * 0.5f, Y_GRID * 0.5f, Z_GRID * 0.5f), Vector3f(wallThickness * 0.5f, Y_GRID * 0.5f, Z_GRID * 0.5f), 0.0f, wall_friction);
+    collisionManager.addBox(Vector3f(X_GRID - wallThickness * 0.5f, Y_GRID * 0.5f, Z_GRID * 0.5f), Vector3f(wallThickness * 0.5f, Y_GRID * 0.5f, Z_GRID * 0.5f), 0.0f, wall_friction);
+    collisionManager.addBox(Vector3f(X_GRID * 0.5f, wallThickness * 0.5f, Z_GRID * 0.5f), Vector3f(X_GRID * 0.5f, wallThickness * 0.5f, Z_GRID * 0.5f), 0.0f, wall_friction);
+    collisionManager.addBox(Vector3f(X_GRID * 0.5f, Y_GRID - wallThickness * 0.5f, Z_GRID * 0.5f), Vector3f(X_GRID * 0.5f, wallThickness * 0.5f, Z_GRID * 0.5f), 0.0f, wall_friction);
+    collisionManager.addBox(Vector3f(X_GRID * 0.5f, Y_GRID * 0.5f, wallThickness * 0.5f), Vector3f(X_GRID * 0.5f, Y_GRID * 0.5f, wallThickness * 0.5f), 0.0f, wall_friction);
+    collisionManager.addBox(Vector3f(X_GRID * 0.5f, Y_GRID * 0.5f, Z_GRID - wallThickness * 0.5f), Vector3f(X_GRID * 0.5f, Y_GRID * 0.5f, wallThickness * 0.5f), 0.0f, wall_friction);
+
+    // Obstacle Spheres
+    //collisionManager.addSphere(Vector3f(10.0f, 15.0f, Z_GRID * 0.5f), 2.0f, 0.3f);
+    //collisionManager.addSphere(Vector3f(30.0f, 5.0f, Z_GRID * 0.5f), 4.0f, 0.3f);
     collisionManager.copyToDevice();
 
-    // Spawn an initial shape of water
-    std::vector<Vector2f> init_pos;
-    std::vector<Vector2f> init_displacement;
+    // Spawn an initial shape of material
+    std::vector<Vector3f> init_pos;
+    std::vector<Vector3f> init_displacement;
 
-    Vector2f init_vel(0.0f, 0.0f);
+    Vector3f init_vel(0.0f, 0.0f, 0.0f);
 
     ps.water.allocate();
     ps.snow.allocate();
@@ -42,25 +47,28 @@ void Simulation::initialize() {
         init_pos.reserve(MAX_PARTICLES);
         init_displacement.reserve(MAX_PARTICLES);
 
-        Vector2f center(static_cast<float>(X_GRID) * 0.5f, static_cast<float>(Y_GRID) * 0.5f);
+        Vector3f center(static_cast<float>(X_GRID) * 0.5f, static_cast<float>(Y_GRID) * 0.5f, static_cast<float>(Z_GRID) * 0.5f);
 
-        float radius = 20.0f; // Size of sphere
+        float radius = 10.0f; // Size of sphere
         float spacing = CELL_SPACING; // Distance between particles
 
         std::mt19937 gen(1337);
         float jitterAmount = 0.35f * spacing;
         std::uniform_real_distribution<float> dist(-jitterAmount, jitterAmount);
 
-        // Generate particles in a circle with jitter
+        // Generate particles in a 3D sphere with jitter
         for (float x = -radius; x <= radius; x += spacing) {
             for (float y = -radius; y <= radius; y += spacing) {
-                if (x * x + y * y <= radius * radius) {
-                    // Apply jitter offset to position
-                    float px = center.x + x + dist(gen);
-                    float py = center.y + y + dist(gen);
+                for (float z = -radius; z <= radius; z += spacing) {
+                    if (x * x + y * y + z * z <= radius * radius) {
+                        // Apply jitter offset to position
+                        float px = center.x + x + dist(gen);
+                        float py = center.y + y + dist(gen);
+                        float pz = center.z + z + dist(gen);
 
-                    init_pos.push_back(Vector2f(px, py));
-                    init_displacement.push_back(physicsDt * init_vel);
+                        init_pos.push_back(Vector3f(px, py, pz));
+                        init_displacement.push_back(physicsDt * init_vel);
+                    }
                 }
             }
         }
@@ -76,52 +84,89 @@ void Simulation::initialize() {
     }
 }
 
-void AddParticlesMidSim(SimulationParticles& ps, float dt, int materialType) {
-    // Add water particles mid sim
-    std::vector<Vector2f> init_pos;
-    std::vector<Vector2f> init_displacement;
+void AddParticlesMidSim(SimulationParticles& ps, float dt, int substepCount, int materialType) {
+    if (substepCount <= 0) return;
 
-    Vector2f init_vel(100.0f, 0.0f);
+    static float emission_phase = 0.0f;
 
-    for (int p = 0; p < 8; ++p) {
-        float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
-        init_pos.push_back(Vector2f(static_cast<float>(INT_CELL_SPAN), static_cast<float>(Y_GRID) - 2.0f * static_cast<float>(INT_CELL_SPAN) - 0.5f * static_cast<float>(p) - r));
-        init_displacement.push_back(dt * init_vel);
+    std::vector<Vector3f> init_pos;
+    std::vector<Vector3f> init_displacement;
+
+    Vector3f init_vel(100.0f, 0.0f, 0.0f);
+
+    float emit_x = static_cast<float>(INT_CELL_SPAN);
+    float emit_y_center = static_cast<float>(Y_GRID) - 4.0f;
+    float emit_z_center = static_cast<float>(Z_GRID) * 0.5f;
+
+    float nozzle_radius = 2.0f;
+    float spacing = CELL_SPACING;
+
+    // Total distance the fluid mass will move forward during this frame
+    float total_dist = init_vel.x * dt * substepCount;
+
+    float current_dist_offset = emission_phase;
+
+    // Emit while the total distance is not satisfied to keep a constant nozzle
+    while (current_dist_offset < total_dist) {
+        float slice_x = emit_x - current_dist_offset;
+
+        for (float dy = -nozzle_radius; dy <= nozzle_radius; dy += spacing) {
+            for (float dz = -nozzle_radius; dz <= nozzle_radius; dz += spacing) {
+                if (dy * dy + dz * dz <= nozzle_radius * nozzle_radius) {
+
+                    float jitter_y = ((float)rand() / RAND_MAX - 0.5f) * 0.1f * spacing;
+                    float jitter_z = ((float)rand() / RAND_MAX - 0.5f) * 0.1f * spacing;
+
+                    Vector3f pos(
+                        slice_x,
+                        emit_y_center + dy + jitter_y,
+                        emit_z_center + dz + jitter_z
+                    );
+
+                    init_pos.push_back(pos);
+                    init_displacement.push_back(dt * init_vel);
+                }
+            }
+        }
+        current_dist_offset += spacing;
     }
 
-   if (materialType == 0)
+    emission_phase = current_dist_offset - total_dist;
+
+    if (init_pos.empty()) return;
+
+    if (materialType == 0)
         ps.water.addParticlesMidSimulation(init_pos, init_displacement);
     else if (materialType == 1)
-       ps.snow.addParticlesMidSimulation(init_pos, init_displacement);
+        ps.snow.addParticlesMidSimulation(init_pos, init_displacement);
     else
-       ps.elastic.addParticlesMidSimulation(init_pos, init_displacement);
+        ps.elastic.addParticlesMidSimulation(init_pos, init_displacement);
 }
-
 void Simulation::step(float renderDt) {
     if (isPaused || (ps.getParticlesCount() == 0 && !addMidSim)) return;
 
-    // Use time accumulator to calculate how many physics steps fit in a frame (based on an interface given physics timestep)
+    // Time accumulator to step physics stably
     if (renderDt > 0.1f) renderDt = 0.1f;
 
     timeAccumulator += renderDt;
 
     int substepCount = static_cast<int>(timeAccumulator / physicsDt);
 
-    const int MAX_SUBSTEPS = 100; // Prevent spiral of death with frame lag
+    const int MAX_SUBSTEPS = 20; // Prevent spiral of death
     if (substepCount > MAX_SUBSTEPS) {
         substepCount = MAX_SUBSTEPS;
     }
 
     timeAccumulator -= static_cast<float>(substepCount) * physicsDt;
 
-    // Execute physics steps for every substep
+    if (ps.getParticlesCount() < MAX_PARTICLES && addMidSim) {
+        AddParticlesMidSim(ps, physicsDt, substepCount, materialType);
+    }
+
+    // Execute physics steps
     for (int substep = 0; substep < substepCount; ++substep) {
 
-        if (ps.getParticlesCount() < MAX_PARTICLES && addMidSim) {
-            AddParticlesMidSim(ps, physicsDt, materialType);
-        }
-
-        // PB-MPM loop solver
+        // PB-MPM solver iterations
         for (int i = 0; i < solverIterations; i++) {
             if (ps.water.num_particles != 0) solveConstraints(ps.water);
             if (ps.snow.num_particles != 0) solveConstraints(ps.snow);
@@ -134,7 +179,6 @@ void Simulation::step(float renderDt) {
             if (ps.elastic.num_particles != 0) p2g(ps.elastic, grid);
 
             updateGrid(grid, collisionManager.getDeviceData());
-
             if (ps.water.num_particles != 0) g2p(ps.water, grid);
             if (ps.snow.num_particles != 0) g2p(ps.snow, grid);
             if (ps.elastic.num_particles != 0) g2p(ps.elastic, grid);
@@ -146,7 +190,7 @@ void Simulation::step(float renderDt) {
     }
 }
 
-void::Simulation::updateMaterialSettings(MaterialType type, MaterialSettings settings) {
+void Simulation::updateMaterialSettings(MaterialType type, MaterialSettings settings) {
     switch (type) {
     case MaterialType::WATER:
         ps.water.settings = settings;

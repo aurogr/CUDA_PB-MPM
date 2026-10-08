@@ -123,6 +123,19 @@ int main(int argc, char* argv[])
         renderEngine.render(simEngine);
         glfwSwapBuffers(window);
         glfwPollEvents();
+
+        static float statsTimer = 0.0f;
+        statsTimer += actual_render_dt;
+
+        if (statsTimer >= 0.5f) { // Update UI twice a second
+            float currentFps = (actual_render_dt > 0.0f) ? (1.0f / actual_render_dt) : 0.0f;
+            int currentParticles = simEngine.getParticlesCount();
+
+            // Print in the exact format Python is looking for
+            std::cout << "STATS " << currentFps << " " << currentParticles << std::endl;
+
+            statsTimer = 0.0f;
+        }
     }
 
     // Cleanup

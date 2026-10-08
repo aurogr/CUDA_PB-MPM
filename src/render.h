@@ -22,5 +22,5 @@ public:
 private:
     void renderBackgroundGrid();
     void renderColliders(const CollisionManager& collisionManager);
-    void renderParticles(const Vector2f* d_particles, int count);
+    void renderParticles(const Vector3f* d_particles, int count);
 };

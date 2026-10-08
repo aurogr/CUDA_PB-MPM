@@ -35,33 +35,35 @@ void integrateParticle(ParticleSystem& ps, const Grid& grid, float dt, float gra
 /// Init quadratic weights (grid step size is assumed to be 1.0)
 /// </summary>
 /// <param name="Xp">Particle position</param>
-/// <param name="w">Returns the 3 stencil weights</param>
-/// <param name="dw">Returns the 3 stencil weights derivatives>
-/// <returns>Starting node index for the 3-node stencil</returns>
-__device__ inline Vector2f initQuadraticWeights(Vector2f Xp, Vector2f w[3], Vector2f dw[3])
+/// <param name="w">Returns the 3 stencil weights per dimension</param>
+/// <param name="dw">Returns the 3 stencil weight derivatives per dimension</param>
+/// <returns>Starting node index for the 3x3x3 stencil</returns>
+__device__ inline Vector3f initQuadraticWeights(Vector3f Xp, Vector3f w[3], Vector3f dw[3])
 {
-    // Quadratic stencil base node starts at floor(Xp - 0.5f)
-    Vector2f base_node(
+    // Quadratic stencil base node starts at floor(Xp - 0.5f) in 3D
+    Vector3f base_node(
         floorf(Xp.x - 0.5f),
-        floorf(Xp.y - 0.5f)
+        floorf(Xp.y - 0.5f),
+        floorf(Xp.z - 0.5f)
     );
 
     // Offset from the base node center
-    Vector2f offset = Xp - base_node;
+    Vector3f offset = Xp - base_node;
 
-    // B-spline weights 
-    Vector2f d0 = Vector2f(1.5f, 1.5f) - offset;
-    Vector2f d1 = offset - Vector2f(1.0f, 1.0f);
-    Vector2f d2 = offset - Vector2f(0.5f, 0.5f);
+    // B-spline distance offsets
+    Vector3f d0 = Vector3f(1.5f, 1.5f, 1.5f) - offset;
+    Vector3f d1 = offset - Vector3f(1.0f, 1.0f, 1.0f);
+    Vector3f d2 = offset - Vector3f(0.5f, 0.5f, 0.5f);
 
-    w[0] = Vector2f(0.5f * d0.x * d0.x, 0.5f * d0.y * d0.y);
-    w[1] = Vector2f(0.75f - d1.x * d1.x, 0.75f - d1.y * d1.y);
-    w[2] = Vector2f(0.5f * d2.x * d2.x, 0.5f * d2.y * d2.y);
+    // Weights (x, y, z)
+    w[0] = Vector3f(0.5f * d0.x * d0.x, 0.5f * d0.y * d0.y, 0.5f * d0.z * d0.z);
+    w[1] = Vector3f(0.75f - d1.x * d1.x, 0.75f - d1.y * d1.y, 0.75f - d1.z * d1.z);
+    w[2] = Vector3f(0.5f * d2.x * d2.x, 0.5f * d2.y * d2.y, 0.5f * d2.z * d2.z);
 
-    // Gradients
-    dw[0] = offset - Vector2f(1.5f, 1.5f);
-    dw[1] = (offset - Vector2f(1.0f, 1.0f)) * -2.0f;
-    dw[2] = offset - Vector2f(0.5f, 0.5f);
+    // Gradients (x, y, z)
+    dw[0] = offset - Vector3f(1.5f, 1.5f, 1.5f);
+    dw[1] = (offset - Vector3f(1.0f, 1.0f, 1.0f)) * -2.0f;
+    dw[2] = offset - Vector3f(0.5f, 0.5f, 0.5f);
 
     return base_node;
 }

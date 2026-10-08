@@ -9,10 +9,10 @@
 #pragma region Material
 
 #pragma region Water
-__device__ void computeDisplacementWater(const MaterialSettings& settings, const float Jp, Matrix2f& Dp) 
+__device__ void computeDisplacementWater(const MaterialSettings& settings, const float Jp, Matrix3f& Dp) 
 {
     //(1) Viscosity: remove deviatoric part of deformation displacement
-    Matrix2f deviatoric = -1.0f * (Dp + Dp.transpose());
+    Matrix3f deviatoric = -1.0f * (Dp + Dp.transpose());
     Dp += settings.viscosity * 0.5f * deviatoric;
     
     //(2) Volume preservation (Incompressibility)
@@ -24,13 +24,13 @@ __device__ void computeDisplacementWater(const MaterialSettings& settings, const
     //1. det(F_new) = 1.0f;
     //2. det(F_new) = det(I + D_p) * det(F_old); where we can linearize the determinant as: det(I + D_p) = 1.0f + Tr(D_p) 
     
-    float alpha = 0.5f * (1.0f / Jp - Dp.trace() - 1.0f); // where the 0.5f comes from using an identity matrix in 2d space so the trace increases by 2*alpha
+    float alpha = (0.33333f) * (1.0f / Jp - Dp.trace() - 1.0f); // where the 0.33f comes from using an identity matrix in 3d space so the trace increases by 3*alpha
 
     // Finally, we add to the deformation displacement towards preserving the volume
     Dp += settings.relaxation * alpha * identity();
 }
 
-__device__ void updateDeformationWater(const MaterialSettings& settings, float& Jp, const Matrix2f Dp) {
+__device__ void updateDeformationWater(const MaterialSettings& settings, float& Jp, const Matrix3f Dp) {
     // Liquids hold no memory of shape, they only care about volume, so storing only the determinant of the deformation gradient is enough
 
     // The true update for volume is det(F_new) = det(I + Dp) * det(F_old)
@@ -41,64 +41,66 @@ __device__ void updateDeformationWater(const MaterialSettings& settings, float& 
 #pragma endregion
 
 #pragma region Snow
-__device__ void computeDisplacementSnow(const MaterialSettings& settings, const Matrix2f Fp, const Matrix2f Fe, Matrix2f& Dp)
+__device__ void computeDisplacementSnow(const MaterialSettings& settings, const Matrix3f Fp, const Matrix3f Fe, Matrix3f& Dp)
 {
     // 1. Trial deformation gradient
-    Matrix2f F_trial = (identity() + Dp) * Fe;
+    Matrix3f F_trial = (identity() + Dp) * Fe;
 
     // 2. Corotated elastic target
-    Matrix2f U, V;
-    Vector2f Sigma;
+    Matrix3f U, V;
+    Vector3f Sigma;
     F_trial.svd(&U, &Sigma, &V);
-    Matrix2f A = U * V.transpose();
+    Matrix3f A = U * V.transpose();
 
     // 3. Elastric strain
-    Matrix2f target_D = A * Fe.inverse() - identity();
-    Matrix2f diff = target_D - Dp;
+    Matrix3f target_D = A * Fe.inverse() - identity();
+    Matrix3f diff = target_D - Dp;
 
     // 4. Disney hardening
     float Jp = fmaxf(Fp.det(), 0.01f);
     float hardening = expf(settings.hard_coeff * (1.0f - Jp));
 
     // 5. Apply hardening to PB-MPM relaxation (based on solver iteration)
-    float dynamic_relaxation = fminf(settings.relaxation * hardening, 1.0f);
+    float dynamic_relaxation = fminf(settings.relaxation * hardening, 2.0f);
 
     // 6. Update displacement
     Dp += diff * dynamic_relaxation;
 }
 
-__device__ void updateDeformationSnow(const MaterialSettings& settings, Matrix2f& Fp, Matrix2f& Fe, const Matrix2f Dp)
+__device__ void updateDeformationSnow(const MaterialSettings& settings, Matrix3f& Fp, Matrix3f& Fe, const Matrix3f Dp)
 {
     // 1. Trial elastic deformation
-    Matrix2f Fe_trial = (identity() + Dp) * Fe;
+    Matrix3f Fe_trial = (identity() + Dp) * Fe;
 
     // 2. SVD to decompose elastic trial matrix
-    Matrix2f U, V;
-    Vector2f Sigma;
+    Matrix3f U, V;
+    Vector3f Sigma;
     Fe_trial.svd(&U, &Sigma, &V);
 
     // 3. Disney Yield Condition: Clamp elastic singular values 
-    Vector2f elasticSigma(
+    Vector3f elasticSigma(
         fminf(fmaxf(Sigma.x, 1.0f - settings.crit_compression), 1.0f + settings.crit_stretch),
-        fminf(fmaxf(Sigma.y, 1.0f - settings.crit_compression), 1.0f + settings.crit_stretch)
+        fminf(fmaxf(Sigma.y, 1.0f - settings.crit_compression), 1.0f + settings.crit_stretch),
+        fminf(fmaxf(Sigma.z, 1.0f - settings.crit_compression), 1.0f + settings.crit_stretch)
     );
 
     // 4. Update elastic deformation Fe
     Fe = U.diag_product(elasticSigma) * V.transpose();
 
     // 5. Accumulate yield excess into plastic deformation Fp
-    Vector2f plasticRatio(
+    Vector3f plasticRatio(
         Sigma.x / fmaxf(elasticSigma.x, 1e-6f),
-        Sigma.y / fmaxf(elasticSigma.y, 1e-6f)
+        Sigma.y / fmaxf(elasticSigma.y, 1e-6f),
+        Sigma.z / fmaxf(elasticSigma.z, 1e-6f)
     );
-    Matrix2f Fp_yield = V.diag_product(plasticRatio) * V.transpose();
-    Matrix2f Fp_new = Fp_yield * Fp;
+    Matrix3f Fp_yield = V.diag_product(plasticRatio) * V.transpose();
+    Matrix3f Fp_new = Fp_yield * Fp;
 
     // 6. Plastic volume limit safeguard
     float Jp_new = Fp_new.det();
     const float min_Jp = 0.2f;
     if (Jp_new < min_Jp) {
-        float scale = sqrtf(min_Jp / fmaxf(Jp_new, 1e-6f));
+        float scale = cbrtf(min_Jp / fmaxf(Jp_new, 1e-6f)); // cubic because its 3d
         Fp_new *= scale;
     }
 
@@ -107,47 +109,48 @@ __device__ void updateDeformationSnow(const MaterialSettings& settings, Matrix2f
 #pragma endregion
 
 #pragma region Elastic
-__device__ void computeDisplacementElastic(const MaterialSettings& settings, const Matrix2f Fe, Matrix2f& Dp)
+__device__ void computeDisplacementElastic(const MaterialSettings& settings, const Matrix3f Fe, Matrix3f& Dp)
 {
     // Formula based on EA's paper is: D = Fe^-1 * A - I (in spatial space: D = A * Fe^-1)
     
     // 1. Compute trial deformation gradient F_trial = (I + Dp) * Fe
-    Matrix2f F_trial = (identity() + Dp) * Fe;
+    Matrix3f F_trial = (identity() + Dp) * Fe;
 
     // 2. We need to find matrix A which is the closest matrix to F_trial with determinant = 1
     // 2.1 Shape preservation: extract rigid rotation target (A_shape) via SVD (safe Polar Decomposition)
-    Matrix2f U, V;
-    Vector2f Sigma;
+    Matrix3f U, V;
+    Vector3f Sigma;
     F_trial.svd(&U, &Sigma, &V);
-    Matrix2f A_shape = U * V.transpose();
+    Matrix3f A_shape = U * V.transpose();
     // 2.2. Volume preservation: compute volume-preserving target (A_vol) with det == 1.0
     // A_vol = F/det(F) but that needs to be reestructured a little for n dimensions
     // s * det(F) = 1 so s = 1/det(F); s^2 * det(F) = 1 so s = 1/ sqrt(det(F)); s^3 * det(F) = 1 so s = 1 / cbrt(det(F))
     float df = F_trial.det();
     float sign = (df < 0.0f) ? -1.0f : 1.0f;
     float cdf = fminf(fmaxf(fabsf(df), 0.1f), 1000.0f);
-    float scale = 1.0f / (sign * sqrtf(cdf));
-    Matrix2f A_vol = scale * F_trial;
+    float scale = 1.0f / (sign * cbrtf(cdf));
+    Matrix3f A_vol = scale * F_trial;
     // 2.3. Constraints are not orthogonal so we introduce an interpolating factor
-    Matrix2f A = settings.elasticity_ratio * A_shape + (1.0f - settings.elasticity_ratio) * A_vol;
+    Matrix3f A = settings.elasticity_ratio * A_shape + (1.0f - settings.elasticity_ratio) * A_vol;
 
     // 3. Calculate target deformation and add the different to the displacement scaled by relaxation
-    Matrix2f target_D = A * Fe.inverse() - identity();
+    Matrix3f target_D = A * Fe.inverse() - identity();
     Dp += settings.relaxation * (target_D - Dp);
 }
 
-__device__ void updateDeformationElastic(const MaterialSettings& mat, Matrix2f& Fe, const Matrix2f Dp)
+__device__ void updateDeformationElastic(const MaterialSettings& mat, Matrix3f& Fe, const Matrix3f Dp)
 {
     // 1. Advance deformation gradient
-    Matrix2f Fe_new = (identity() + Dp) * Fe;
+    Matrix3f Fe_new = (identity() + Dp) * Fe;
 
     // 2. Use SVD to clamp values
-    Matrix2f U, V;
-    Vector2f Sigma;
+    Matrix3f U, V;
+    Vector3f Sigma;
     Fe_new.svd(&U, &Sigma, &V);
 
     Sigma.x = fminf(fmaxf(Sigma.x, 0.2f), 1000.0f);
     Sigma.y = fminf(fmaxf(Sigma.y, 0.2f), 1000.0f);
+    Sigma.z = fminf(fmaxf(Sigma.z, 0.2f), 1000.0f);
 
     Fe = U.diag_product(Sigma) * V.transpose();
 }
@@ -155,63 +158,80 @@ __device__ void updateDeformationElastic(const MaterialSettings& mat, Matrix2f& 
 #pragma endregion
 
 #pragma region Collisions
-__device__ void checkCollision(const Vector2f pos, CollisionObjectData obj, float& phi, Vector2f& n) 
+__device__ void checkCollision(const Vector3f pos, CollisionObjectData obj, float& phi, Vector3f& n)
 {
-    if (obj.type == 0) { // sphere
-        Vector2f r = pos - obj.center;
+    if (obj.type == 0) { // 3D Sphere
+        Vector3f r = pos - obj.center;
         float dist = r.length();
         phi = dist - obj.size.x;
-        n = (dist > 1e-5f) ? (r / dist) : Vector2f(0.0f, 1.0f);
+        n = (dist > 1e-5f) ? (r / dist) : Vector3f(0.0f, 1.0f, 0.0f);
     }
-    else if (obj.type == 1) { // box
-        Vector2f d_pos = pos - obj.center;
+    else if (obj.type == 1) { // 3D Box
+        Vector3f d_pos = pos - obj.center;
 
+        // Apply 3D Y-axis rotation (Yaw)
         if (obj.rotation != 0.0f) {
             float c = cosf(-obj.rotation);
             float s = sinf(-obj.rotation);
-            float x_rot = c * d_pos.x - s * d_pos.y;
-            float y_rot = s * d_pos.x + c * d_pos.y;
-            d_pos = Vector2f(x_rot, y_rot);
+            float x_rot = c * d_pos.x - s * d_pos.z;
+            float z_rot = s * d_pos.x + c * d_pos.z;
+            d_pos = Vector3f(x_rot, d_pos.y, z_rot);
         }
 
-        Vector2f abs_pos(fabsf(d_pos.x), fabsf(d_pos.y));
-        Vector2f q = abs_pos - obj.size;
+        Vector3f abs_pos(fabsf(d_pos.x), fabsf(d_pos.y), fabsf(d_pos.z));
+        Vector3f q = abs_pos - obj.size;
 
-        float outside_dist = Vector2f(fmaxf(q.x, 0.0f), fmaxf(q.y, 0.0f)).length();
-        float inside_dist = fminf(fmaxf(q.x, q.y), 0.0f);
+        // 3D SDF calculation: distance outside and inside the box
+        Vector3f q_out(fmaxf(q.x, 0.0f), fmaxf(q.y, 0.0f), fmaxf(q.z, 0.0f));
+        float outside_dist = q_out.length();
+        float inside_dist = fminf(fmaxf(q.x, fmaxf(q.y, q.z)), 0.0f);
         phi = outside_dist + inside_dist;
 
         float sign_x = (d_pos.x < 0.0f) ? -1.0f : 1.0f;
         float sign_y = (d_pos.y < 0.0f) ? -1.0f : 1.0f;
+        float sign_z = (d_pos.z < 0.0f) ? -1.0f : 1.0f;
 
+        // Compute 3D surface normal
         if (outside_dist > 0.0f) {
-            n = Vector2f((q.x > 0.0f) ? sign_x * (q.x / outside_dist) : 0.0f,
-                (q.y > 0.0f) ? sign_y * (q.y / outside_dist) : 0.0f);
+            n = Vector3f(
+                (q.x > 0.0f) ? sign_x * (q.x / outside_dist) : 0.0f,
+                (q.y > 0.0f) ? sign_y * (q.y / outside_dist) : 0.0f,
+                (q.z > 0.0f) ? sign_z * (q.z / outside_dist) : 0.0f
+            );
         }
         else {
-            if (q.x > q.y) n = Vector2f(sign_x, 0.0f);
-            else n = Vector2f(0.0f, sign_y);
+            // Point normal along the closest face when inside the box
+            if (q.x >= q.y && q.x >= q.z) {
+                n = Vector3f(sign_x, 0.0f, 0.0f);
+            }
+            else if (q.y >= q.z) {
+                n = Vector3f(0.0f, sign_y, 0.0f);
+            }
+            else {
+                n = Vector3f(0.0f, 0.0f, sign_z);
+            }
         }
 
+        // Re-apply world-space Y-axis rotation to collision normal
         if (obj.rotation != 0.0f) {
             float c = cosf(obj.rotation);
             float s = sinf(obj.rotation);
-            float nx = c * n.x - s * n.y;
-            float ny = s * n.x + c * n.y;
-            n = Vector2f(nx, ny);
+            float nx = c * n.x - s * n.z;
+            float nz = s * n.x + c * n.z;
+            n = Vector3f(nx, n.y, nz);
         }
     }
 }
 
-__device__ void computeCollidersDisplacement(const Vector2f Xi, Vector2f& Di, CollisionManagerDeviceData colliders) {
+__device__ void computeCollidersDisplacement(const Vector3f Xi, Vector3f& Di, CollisionManagerDeviceData colliders) {
     for (int i = 0; i < colliders.count; i++) {
         // 1. Compute candidate position 
-        Vector2f Xi_pred = Xi + Di;
+        Vector3f Xi_pred = Xi + Di;
 
         // 2. Check collision
         CollisionObjectData obj = colliders.d_objects[i];
         float phi = 0.0f;
-        Vector2f n(0.0f, 0.0f);
+        Vector3f n(0.0f, 0.0f, 0.0f);
 
         checkCollision(Xi_pred, obj, phi, n);
 
@@ -220,7 +240,7 @@ __device__ void computeCollidersDisplacement(const Vector2f Xi, Vector2f& Di, Co
             float vn = Di.dot(n); // Normal displacement
 
             if (vn < 0.0f) {
-                Vector2f Dt = Di - n * vn; // Tangential displacement
+                Vector3f Dt = Di - n * vn; // Tangential displacement
                 float Dt_len = Dt.length();
 
                 // Apply Coulomb friction to
@@ -228,7 +248,7 @@ __device__ void computeCollidersDisplacement(const Vector2f Xi, Vector2f& Di, Co
                     float friction_limit = obj.friction * (-vn); // Friction scales with normal force
 
                     if (Dt_len <= friction_limit)
-                        Dt = Vector2f(0.0f, 0.0f); // Static friction
+                        Dt = Vector3f(0.0f, 0.0f, 0.0f); // Static friction
                     else
                         Dt -= (Dt / Dt_len) * friction_limit; // Kinetic friction
                 }
@@ -240,12 +260,12 @@ __device__ void computeCollidersDisplacement(const Vector2f Xi, Vector2f& Di, Co
     }
 }
 
-__device__ void pushOutOfCollider(Vector2f& Xp, Vector2f&Xp_delta, CollisionManagerDeviceData colliders) {
+__device__ void pushOutOfCollider(Vector3f& Xp, Vector3f&Xp_delta, CollisionManagerDeviceData colliders) {
     for (int i = 0; i < colliders.count; i++) {
         // 1. Check collision
         CollisionObjectData obj = colliders.d_objects[i];
         float phi = 0.0f;
-        Vector2f n(0.0f, 0.0f);
+        Vector3f n(0.0f, 0.0f, 0.0f);
 
         checkCollision(Xp, obj, phi, n);
 
@@ -269,10 +289,8 @@ __device__ void pushOutOfCollider(Vector2f& Xp, Vector2f&Xp_delta, CollisionMana
     }
 }
 
-#pragma endregion
-
 #pragma region Solver
-__global__ void solveConstraints_kernel(MaterialType d_mat, MaterialSettings d_settings, float* d_Jp, Matrix2f* d_Fp, Matrix2f* d_Fe, Matrix2f* d_Dp, const int num_particles)
+__global__ void solveConstraints_kernel(MaterialType d_mat, MaterialSettings d_settings, float* d_Jp, Matrix3f* d_Fp, Matrix3f* d_Fe, Matrix3f* d_Dp, const int num_particles)
 {
     int p = blockIdx.x * blockDim.x + threadIdx.x;
     if (p >= num_particles) return;
@@ -290,106 +308,126 @@ __global__ void solveConstraints_kernel(MaterialType d_mat, MaterialSettings d_s
     }
 }
 
-
-__global__ void p2g_kernel(const Vector2f* d_Xp, const Vector2f* d_Xp_delta, const float* d_Mp, const Matrix2f* d_Dp, const int num_particles,
-    float* d_Mi, Vector2f* d_Di, const int gridX, const int gridY)
+__global__ void p2g_kernel(const Vector3f* d_Xp, const Vector3f* d_Xp_delta, const float* d_Mp, const Matrix3f* d_Dp, const int num_particles,
+    float* d_Mi, Vector3f* d_Di, const int gridX, const int gridY)
 {
     // (1) Get particle (thread per particle) and its characteristics
     int p = blockIdx.x * blockDim.x + threadIdx.x;
     if (p >= num_particles) return;
 
-    Vector2f Xp = d_Xp[p];
-    Vector2f Xp_delta = d_Xp_delta[p];
-    Matrix2f Dp = d_Dp[p];
+    Vector3f Xp = d_Xp[p];
+    Vector3f Xp_delta = d_Xp_delta[p];
+    Matrix3f Dp = d_Dp[p];
     float Mp = d_Mp[p];
 
     // (2) Find the bottom-left node closest to the particle of the 3x3 stencil (and init weights)
-    Vector2f w[3], dw[3];
-    Vector2f base = initQuadraticWeights(Xp, w, dw);
-
+    Vector3f w[3], dw[3];
+    Vector3f base = initQuadraticWeights(Xp, w, dw);
+    
     // (3) Loop over the neighbor nodes
-    for (int y = 0; y < 3; ++y) {
-        for (int x = 0; x < 3; ++x) {
+    int nx = gridX + 1;
+    int ny = gridY + 1;
 
-            // (3.1) Get current node idx
-            Vector2f node(base.x + x, base.y + y);
-            int node_idx = node.x + (gridX + 1) * node.y;
+    #pragma unroll
+    for (int z = 0; z < 3; ++z) {
+        #pragma unroll
+        for (int y = 0; y < 3; ++y) {
+            #pragma unroll
+            for (int x = 0; x < 3; ++x) {
 
-            // (3.2) Compute accumulation on nodes
+                // (3.1) Get current node idx
+                Vector3f node(base.x + x, base.y + y, base.z + z);
+                int node_idx = static_cast<int>(node.x) +
+                    nx * (static_cast<int>(node.y) + ny * static_cast<int>(node.z));
 
-            // Offset from particle to node center is needed for APIC
-            Vector2f offset = node - Xp;
+                // (3.2) Compute accumulation on nodes
+
+                // Offset from particle to node center is needed for APIC
+                Vector3f offset = node - Xp;
             
-            // Weighted mass: mi = sum(Wip * Mp)
-            float Wip = w[x].x * w[y].y;
-            float inMi = Wip * Mp;
+                // Weighted mass: mi = sum(Wip * Mp)
+                float Wip = w[x].x * w[y].y * w[z].z;
+                float inMi = Wip * Mp;
 
-            // Momemtum:
-            Vector2f inDi = inMi * (Xp_delta + Dp * offset);
+                // Momemtum:
+                Vector3f inDi = inMi * (Xp_delta + Dp * offset);
 
-            // Atomic accumulation into GPU grid nodes
-            atomicAdd(&d_Mi[node_idx], inMi);
-            atomicAdd(&d_Di[node_idx].x, inDi.x);
-            atomicAdd(&d_Di[node_idx].y, inDi.y);
+                // Atomic accumulation into GPU grid nodes
+                atomicAdd(&d_Mi[node_idx], inMi);
+                atomicAdd(&d_Di[node_idx].x, inDi.x);
+                atomicAdd(&d_Di[node_idx].y, inDi.y);
+                atomicAdd(&d_Di[node_idx].z, inDi.z);
+            }
         }
     }
 }
 
-__global__ void updateGrid_kernel(const float* d_Mi, Vector2f* d_Di,
-    const int num_nodes, const int gridX, const int gridY, CollisionManagerDeviceData collisionData) 
+__global__ void updateGrid_kernel(const float* d_Mi, Vector3f* d_Di,
+    const int gridX, const int gridY, const int gridZ, CollisionManagerDeviceData collisionData)
 {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= num_nodes) return;
+    int gx = blockIdx.x * blockDim.x + threadIdx.x;
+    int gy = blockIdx.y * blockDim.y + threadIdx.y;
+    int gz = blockIdx.z * blockDim.z + threadIdx.z;
+
+    int nx = gridX + 1;
+    int ny = gridY + 1;
+    int nz = gridZ + 1;
+
+    if (gx >= nx || gy >= ny || gz >= nz) return;
+
+    int i = gx + nx * (gy + ny * gz);
 
     float Mi = d_Mi[i];
-
     if (Mi < 1e-5f) {
-        d_Di[i] = Vector2f(0.0f, 0.0f);
+        d_Di[i] = Vector3f(0.0f, 0.0f, 0.0f);
         return;
     }
 
-    // Get grid displacement from momentum
     d_Di[i] /= Mi;
-
-    // Update displacement with collisions
-    int gx = i % (gridX + 1);
-    int gy = i / (gridX + 1);
-    Vector2f Xi ((float)gx, (float)gy);
-
+    Vector3f Xi(static_cast<float>(gx), static_cast<float>(gy), static_cast<float>(gz));
     computeCollidersDisplacement(Xi, d_Di[i], collisionData);
 }
 
-__global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, Matrix2f* d_Dp, const int num_particles,
-    Vector2f* d_Di, const int gridX, const int gridY)
+__global__ void g2p_kernel(Vector3f* d_Xp, Vector3f* d_Xp_delta, Matrix3f* d_Dp, const int num_particles,
+    Vector3f* d_Di, const int gridX, const int gridY)
 {
     // (1) Get particle (thread per particle) and its characteristics
     int p = blockIdx.x * blockDim.x + threadIdx.x;
     if (p >= num_particles) return;
 
-    Vector2f Xp = d_Xp[p];
-    Vector2f Xp_delta(0.0f, 0.0f);
-    Matrix2f Bp (0.0f, 0.0f, 0.0f, 0.0f);
+    Vector3f Xp = d_Xp[p];
+    Vector3f Xp_delta = Vector3f();
+    Matrix3f Bp = Matrix3f();
 
     // (2) Get base grid node and init weights
-    Vector2f w[3], dw[3];
-    Vector2f base = initQuadraticWeights(Xp, w, dw);
+    Vector3f w[3], dw[3];
+    Vector3f base = initQuadraticWeights(Xp, w, dw);
 
-    // (3) Stencil
-    for (int y = 0; y < 3; ++y) {
-        for (int x = 0; x < 3; ++x) {
-            // 3.1 Get current node idx
-            Vector2f node(base.x + x, base.y + y);
-            int node_idx = node.x + (gridX + 1) * node.y;
+    // (3) Stencil (3x3x3)
+    int nx = gridX + 1;
+    int ny = gridY + 1;
 
-            // 3.2. Acumulate Bp and predicted position from weighted displacement
-            float Wip = w[x].x * w[y].y;
-            Vector2f WipDi = Wip * d_Di[node_idx];
+    #pragma unroll
+    for (int z = 0; z < 3; ++z) {
+        #pragma unroll
+        for (int y = 0; y < 3; ++y) {
+            #pragma unroll
+            for (int x = 0; x < 3; ++x) {
+                // (3.1) Get current node position and flattened 3D index
+                Vector3f node(base.x + x, base.y + y, base.z + z);
+                int node_idx = static_cast<int>(node.x) +
+                    nx * (static_cast<int>(node.y) + ny * static_cast<int>(node.z));
 
-            Xp_delta += WipDi;
+                // (3.2) Accumulate 3D weight (X * Y * Z)
+                float Wip = w[x].x * w[y].y * w[z].z;
+                Vector3f WipDi = Wip * d_Di[node_idx];
 
-            // Offset from particle to node center is needed for APIC
-            Vector2f offset = node - Xp;
-            Bp += outer_product(WipDi, offset);
+                Xp_delta += WipDi;
+
+                // Offset from particle to node center for APIC transfer
+                Vector3f offset = node - Xp;
+                Bp += outer_product(WipDi, offset);
+            }
         }
     }
 
@@ -398,10 +436,10 @@ __global__ void g2p_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, Matrix2f* d_Dp,
     d_Xp_delta[p] = Xp_delta;
 }
 
-__global__ void integrateParticle_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, Matrix2f* d_Dp, 
-    MaterialType mat, MaterialSettings settings, float* d_Jp, Matrix2f* d_Fp, Matrix2f* d_Fe,
-    const int num_particles, const int gridX, const int gridY, const float dt, const float G, CollisionManagerDeviceData collisionData)
-{
+__global__ void integrateParticle_kernel(Vector3f* d_Xp, Vector3f* d_Xp_delta, Matrix3f* d_Dp, 
+    MaterialType mat, MaterialSettings settings, float* d_Jp, Matrix3f* d_Fp, Matrix3f* d_Fe,
+    const int num_particles, const int gridX, const int gridY ,const int gridZ, const float dt, const float G, CollisionManagerDeviceData collisionData)
+{ 
     // 1. Get particle (thread per particle) and its characteristics
     int p = blockIdx.x * blockDim.x + threadIdx.x;
     if (p >= num_particles) return;
@@ -420,6 +458,7 @@ __global__ void integrateParticle_kernel(Vector2f* d_Xp, Vector2f* d_Xp_delta, M
     // because of the interpolation used and the cell being 1.0f wide the domain is 1.5f units less on each side than grid size
     d_Xp[p].x = fminf(fmaxf(d_Xp[p].x, 1.5f), (float)gridX - 1.5f);
     d_Xp[p].y = fminf(fmaxf(d_Xp[p].y, 1.5f), (float)gridY - 1.5f);
+    d_Xp[p].z = fminf(fmaxf(d_Xp[p].z, 1.5f), (float)gridZ - 1.5f);
 
     // 6. Update deformation
     switch (mat) {
@@ -459,11 +498,15 @@ void p2g(const ParticleSystem& ps, Grid& grid)
 
 void updateGrid(Grid& grid, CollisionManagerDeviceData collisionData)
 {
-    int blockSize = 256;
-    int gridSize = (grid.num_nodes + blockSize - 1) / blockSize;
+    dim3 blockSize(8, 8, 8); // 512 threads per block
+    dim3 gridSize(
+        (grid.grid_x + 1 + blockSize.x - 1) / blockSize.x,
+        (grid.grid_y + 1 + blockSize.y - 1) / blockSize.y,
+        (grid.grid_z + 1 + blockSize.z - 1) / blockSize.z
+    );
 
-    updateGrid_kernel <<<gridSize, blockSize >>> 
-        (grid.d_Mi, grid.d_Di, grid.num_nodes, grid.grid_x, grid.grid_y, collisionData);
+    updateGrid_kernel << <gridSize, blockSize >> >
+        (grid.d_Mi, grid.d_Di, grid.grid_x, grid.grid_y, grid.grid_z, collisionData);
 }
 
 void g2p(ParticleSystem& ps, const Grid& grid)
@@ -485,7 +528,7 @@ void integrateParticle(ParticleSystem& ps, const Grid& grid, float dt, float gra
     integrateParticle_kernel << <gridSize, blockSize >> >
         (ps.d_Xp, ps.d_Xp_delta, ps.d_Dp,
          ps.type, ps.settings, ps.d_Jp, ps.d_Fp, ps.d_Fe, ps.num_particles,
-        grid.grid_x, grid.grid_y, dt, gravity, collisionData);
+        grid.grid_x, grid.grid_y, grid.grid_z, dt, gravity, collisionData);
 }
 
 #pragma endregion
