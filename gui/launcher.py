@@ -112,18 +112,25 @@ class PyQT_gui(QWidget):
         running_group_box = QGroupBox("Real time simulation parameters")
         running_layout = QFormLayout()
         
-        # 1. Add mid sim Checkbox
+        # Add mid sim Checkbox
         self.add_mid_sim = QCheckBox("Add particles mid simulation")
         self.add_mid_sim.stateChanged.connect(self.on_add_mid_sim)
 
-        # 2. TimeStep Slider
+        # TimeStep Slider
         self.timestep_label = QLabel("dt: 0.0050")
         self.timestep_slider = QSlider(Qt.Horizontal)
         self.timestep_slider.setRange(1, 10)
         self.timestep_slider.setValue(5)
         self.timestep_slider.valueChanged.connect(self.on_timestep)
 
-        # 3. Pause Checkbox
+        # Solver iterations Slider
+        self.solver_it_label = QLabel("6")
+        self.solver_it_slider = QSlider(Qt.Horizontal)
+        self.solver_it_slider.setRange(1, 20)
+        self.solver_it_slider.setValue(6)
+        self.solver_it_slider.valueChanged.connect(self.on_solver_iterations)
+
+        # Pause Checkbox
         self.pause = QCheckBox("Pause simulation")
         self.pause.setCheckState(Qt.CheckState.Checked)
         self.pause.stateChanged.connect(self.on_pause)
@@ -131,6 +138,8 @@ class PyQT_gui(QWidget):
         running_layout.addRow(self.add_mid_sim)
         running_layout.addRow("Time Step (dt):", self.timestep_slider)
         running_layout.addRow("", self.timestep_label)
+        running_layout.addRow("Solver iterations:", self.solver_it_slider)
+        running_layout.addRow("", self.solver_it_label)
         running_layout.addRow(self.pause)
 
         running_group_box.setLayout(running_layout)
@@ -224,13 +233,14 @@ class PyQT_gui(QWidget):
         init_sphere_str = "1" if self.init_sphere.isChecked() else "0"
         add_mid_sim_str = "1" if self.add_mid_sim.isChecked() else "0"
         dt_val = self.timestep_slider.value() / 1000.0
+        solver_it = self.solver_it_slider.value()
         is_paused_str = "1" # TODO: maybe fix current workaround which starts paused and unpauses when program starts #"1" if self.pause.isChecked() else "0"
         chosen_mat = 0 if self.mat0.isChecked() else 1 if self.mat1.isChecked() else 2
         
         args = [
             str(self.sim_x), str(self.sim_y), 
             init_sphere_str, add_mid_sim_str, 
-            f"{dt_val:.6f}", is_paused_str, str(chosen_mat)
+            f"{dt_val:.6f}", is_paused_str, str(chosen_mat), f"{solver_it}"
         ]
 
         self.startup_group_box.setEnabled(False)
@@ -271,9 +281,15 @@ class PyQT_gui(QWidget):
 
     def on_timestep(self, value):   
         dt_val = value / 1000.0
-        self.timestep_label.setText(f"dt: {dt_val:.4f}")
+        self.timestep_label.setText(f"{dt_val:.4f}")
         if self.process.state() == QProcess.Running:
             command = f"DT {dt_val:.6f}\n"
+            self.process.write(command.encode("utf-8"))
+
+    def on_solver_iterations(self, value):   
+        self.solver_it_label.setText(f"{value}")
+        if self.process.state() == QProcess.Running:
+            command = f"SOLVER_IT {value}\n"
             self.process.write(command.encode("utf-8"))
 
     def on_pause(self):

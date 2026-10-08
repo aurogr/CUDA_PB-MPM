@@ -61,6 +61,12 @@ void listenToPythonCommands() {
                     simEngine.updateMaterialSettings((MaterialType)matType, s);
                 }
             }
+            else if (command == "SOLVER_IT") {
+                int solverIt;
+                if (ss >> solverIt) {
+                    simEngine.setSolverIterations(solverIt);
+                }
+            }
         }
         std::cout << "[C++ Engine] Stdin stream closed." << std::endl;
         }).detach();
@@ -83,6 +89,7 @@ int main(int argc, char* argv[])
         simEngine.setPhysicsDt(static_cast<float>(std::atof(argv[5])));
         simEngine.setPause((std::atoi(argv[6]) == 1));
         simEngine.setMaterialType(std::stoi(argv[7]));
+        simEngine.setSolverIterations(std::stoi(argv[8]));
 
         listenToPythonCommands();
     }    

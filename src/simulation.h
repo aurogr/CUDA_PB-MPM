@@ -20,10 +20,10 @@ private:
     bool initSphere = true;
     bool addMidSim = false;
     int materialType = 0; // 0 = water, 1 = snow, 2 = elastic, 3 = both TODO: CHANGE FOR PREPARED SCENES
+    int solverIterations = 6;
 
     // Constant variables
     const float gravity = 9.81f;
-    const int solverIterations = 2;
 
 public:
     Simulation();
@@ -45,6 +45,7 @@ public:
     void setPhysicsDt(float newValue) { physicsDt = newValue; }
     void setInitSphere(float newValue) { initSphere = newValue; }
     void setAddMidSim(float newValue) { addMidSim = newValue; }
-    void setMaterialType(float newValue) { materialType = newValue; }
+    void setMaterialType(int newValue) { materialType = newValue; }
+    void setSolverIterations(int newValue) { solverIterations = newValue; }
 #pragma endregion
 };
